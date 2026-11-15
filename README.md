@@ -78,6 +78,38 @@ Things to know:
 - The chat service URLs carry a region, set by `REGION` at the top of the file (`apac`). If requests start returning 404, change it to the region your tenant uses.
 - These are Teams' own undocumented endpoints, so a Teams update can break them.
 
+## tiktok.js
+
+Posts videos and comments as you through the web API TikTok Studio uses, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#tiktok-video`, for `fill` to put the video in. Studio's own upload input would start Studio's uploader instead. |
+| `post` | Uploads the video in `#tiktok-video`, publishes it and returns its `id` and `url`. Args: `description`, `hashtags` (separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs `description`, `hashtags` or both. |
+| `comment` | Posts a comment as you and returns its id. Args: `video` (the video's URL, such as `url` from `post`), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://www.tiktok.com/tiktokstudio/content
+chrome-devtools --target <name> adapter tiktok.js prepare
+chrome-devtools --target <name> fill '#tiktok-video' clip.mp4
+chrome-devtools --target <name> adapter tiktok.js post -a description="..." -a hashtags="AITools, LLM"
+chrome-devtools --target <name> adapter tiktok.js comment -a video=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- Run the functions on a TikTok Studio page, where `post` reads the account and the upload region. The tab doesn't need to be in front.
+- The caption is `description`, a blank line, then the hashtags. Every `#tag` in it becomes a linked hashtag, including any inside `description`. Comments are allowed on the post; duet, stitch and reuse are not. TikTok makes the cover from the video.
+- `post` empties `#tiktok-video` once the video is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- Pass `video` as a URL. The CLI turns a bare 19-digit id into a rounded number, so `comment` refuses one.
+- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the text and the visibility with the user before running them.
+- TikTok's own scripts in the page sign every call, so the adapter never reads tokens or cookies. The temporary upload credentials TikTok hands `post` are used only inside the page: never returned, logged or written to disk.
+- The upload region comes from the page, the way Studio's uploader reads it. Only the Singapore region has been tried.
+- These are TikTok's undocumented endpoints, so a TikTok update can break them.
+
+Status (2026-11-16): `post` published an 11 MB video (three upload slices) as Only you on a Singapore-region account. The video page showed both hashtags as links and a cover, and the test post was then deleted. `comment` posted a comment on a public video (TikTok returned its id), which was then deleted. A signed API call was also checked with the tab in the background.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
