@@ -179,6 +179,39 @@ Things to know:
 
 Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image upload was also tried, without posting it.
 
+## instagram.js
+
+Posts a video as a Reel and comments as you on Instagram, through Instagram's own web code, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#ig-video`, for `fill` to put the video in. |
+| `post` | Uploads the video in `#ig-video`, publishes it as a Reel and returns its `id` and `url`. Args: `caption`. |
+| `comment` | Posts a comment as you and returns its id. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://www.instagram.com/
+chrome-devtools --target <name> adapter instagram.js prepare
+chrome-devtools --target <name> fill '#ig-video' clip.mp4
+chrome-devtools --target <name> adapter instagram.js post -a caption="..."
+chrome-devtools --target <name> adapter instagram.js comment -a post=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- Run it on any signed-in `www.instagram.com` page. `post` loads the New post dialog's code itself, without opening the dialog.
+- `post` handles one video, published as a Reel. Photos and carousels aren't supported. It reads the video's duration and size with Instagram's own container parser, so it takes MP4 and MOV files.
+- Hashtags and @mentions in `caption` work as typed. Comments and like counts stay on, as Instagram sets them for a new post.
+- Instagram picks the cover frame: `post` uses the composer's mode where Instagram takes it, instead of uploading a frame from the page.
+- `post` empties `#ig-video` once the Reel is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- `comment` takes the post's URL and works out the media id from the code in it.
+- `post` and `comment` publish immediately, publicly unless the account is private, and can't be undone from here. Agents: confirm the video, the caption and the text with the user before running them.
+- It calls Instagram's own modules through the page's `require`, and those add the CSRF and session tokens, so the adapter never reads tokens or cookies.
+- These are Instagram's internal endpoints and page internals, so an Instagram update can break them.
+
+Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
