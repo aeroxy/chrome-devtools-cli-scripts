@@ -147,6 +147,38 @@ Things to know:
 
 Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried.
 
+## x.js
+
+Posts and replies as you on X, through the API client X's own web app uses, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `reply` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#x-media`, for `fill` to put one image, GIF or video in. A text-only post doesn't need it. |
+| `post` | Publishes `text`, with the file in `#x-media` attached if there is one, and returns the post's `id` and `url`. Args: `text`. It needs text, media or both. |
+| `reply` | Posts a reply as you and returns its `id` and `url`. Args: `to` (the post's URL, such as `url` from `post`), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://x.com/home
+chrome-devtools --target <name> adapter x.js prepare
+chrome-devtools --target <name> fill '#x-media' clip.mp4
+chrome-devtools --target <name> adapter x.js post -a text="..."
+chrome-devtools --target <name> adapter x.js reply -a to=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Attaching media needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- Run it on any signed-in `x.com` page. X's page kept answering from a background tab in testing.
+- Hashtags, @mentions and links in `text` work as typed: X links them itself. X applies its own length limit and duplicate-post check, and `post` passes X's error on.
+- A video is posted once X has finished processing it, as the web app does.
+- `post` empties `#x-media` once the post is published, so running it again can't post the same media twice. A page reload removes the input: run `prepare` and `fill` again.
+- Pass `to` as a URL. The CLI turns a bare 19-digit id into a rounded number, so `reply` refuses one. Replying to your own latest post, one after another, makes a thread. `reply` attaches no media.
+- `post` and `reply` publish immediately, publicly unless the account is protected, and can't be undone from here. Agents: confirm the text and any media with the user before running them.
+- It borrows X's own API client from the page, which adds the bearer token, the CSRF token and the transaction id, so the adapter never reads tokens or cookies. The query id and feature list for posting come from X's code in the page, so they follow X's updates.
+- These are X's internal endpoints and page internals, so an X update can break them.
+
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image upload was also tried, without posting it.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
