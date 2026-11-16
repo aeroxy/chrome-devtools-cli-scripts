@@ -110,6 +110,43 @@ Things to know:
 
 Status (2026-11-16): `post` published an 11 MB video (three upload slices) as Only you on a Singapore-region account. The video page showed both hashtags as links and a cover, and the test post was then deleted. `comment` posted a comment on a public video (TikTok returned its id), which was then deleted. A signed API call was also checked with the tab in the background.
 
+## rednote.js
+
+Posts video notes and comments as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#rednote-video`, for `fill` to put the video in. The publish page's own input would start the page's uploader instead. |
+| `post` | Uploads the video in `#rednote-video`, publishes it as a video note and returns its `id` and a `url` that opens it. Args: `title` (at most 20 characters), `description`, `hashtags` (RedNote topic names, separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs at least one of `title`, `description` and `hashtags`. |
+| `comment` | Posts a comment as you and returns its id. Args: `note` (the note's URL, such as `url` from `post`, or its 24-character id), `text`. |
+
+```bash
+chrome-devtools --target <name> select-page
+chrome-devtools --target <name> navigate https://creator.xiaohongshu.com/publish/publish
+chrome-devtools --target <name> adapter rednote.js prepare
+chrome-devtools --target <name> fill '#rednote-video' clip.mp4
+chrome-devtools --target <name> adapter rednote.js post -a title="..." -a description="..." -a hashtags="AI工具, 大模型"
+chrome-devtools --target <name> navigate https://www.xiaohongshu.com/explore
+chrome-devtools --target <name> adapter rednote.js comment -a note=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- `prepare` and `post` run on the publish page, whose own video tools `post` uses to read the video's metadata and take its first frame for the cover. Other creator pages don't start those tools. `comment` runs on `www.xiaohongshu.com`.
+- Let the publish page load with its tab showing (`select-page`, with Chrome not hidden behind other windows). Twice, a publish page that loaded in a hidden tab froze until the tab was shown, and every chrome-devtools command waited behind it. Once it has loaded, `post` works with the tab in the background.
+- The note's text is `description`, a blank line, then the hashtags. RedNote links a hashtag only to an existing topic, so `post` looks each one up first and stops before uploading anything if one isn't a topic, naming the closest topics it found. Names match exactly first, then ignoring case; `AIAgent` and `aiagent` are separate topics. A `#` typed inside `description` stays plain text.
+- `title` is counted the way the publish page counts it: a Chinese character as one, two ASCII characters as one.
+- `friends` means mutual follows only. Comments and copying the note's text (允许正文复制) are allowed, the publish page's defaults for a new note.
+- Some topics carry a campaign (活动). The publish page joins it when you pick such a topic from its list; `post` doesn't.
+- `post` empties `#rednote-video` once the note is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- The `url` from `post` carries the `xsec_token` RedNote's note pages ask for, from the note manager's list. The share link RedNote returns on publishing has none, and for the test note it showed "page isn't available".
+- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the title, the text and the visibility with the user before running them.
+- The page's own HTTP client signs every call, so the adapter never reads tokens or cookies. The upload permits RedNote hands `post` are used only inside the page: never returned, logged or written to disk.
+- It relies on RedNote's undocumented endpoints and on page internals (the publish page's `window._publisher` and the page's HTTP client module), so a RedNote update can break it.
+
+Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
