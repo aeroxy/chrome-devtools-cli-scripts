@@ -212,6 +212,38 @@ Things to know:
 
 Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried.
 
+## youtube.js
+
+Uploads videos and comments on your videos as you on YouTube, through YouTube Studio's own web client, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#yt-video`, for `fill` to put the video in. |
+| `post` | Uploads the video in `#yt-video`, publishes it and returns its `id` and `url`. Args: `title` (required), `description`, `visibility` (`public`, `unlisted` or `private`; default `public`). |
+| `comment` | Posts a comment as you on a video on your own channel and returns its id. Args: `video` (the video's URL, such as `url` from `post`, or its id), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://studio.youtube.com/
+chrome-devtools --target <name> adapter youtube.js prepare
+chrome-devtools --target <name> fill '#yt-video' clip.mp4
+chrome-devtools --target <name> adapter youtube.js post -a title="..." -a description="..."
+chrome-devtools --target <name> adapter youtube.js comment -a video=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- Run it on a signed-in `studio.youtube.com` page.
+- `post` marks the video as not made for kids, the answer Studio requires before publishing. YouTube decides whether it's a Short and processes the video after publishing, so it can take a few minutes to play.
+- `comment` works on videos on your own channel, because it goes through Studio, which only lists comments for your own videos. YouTube refuses comments on private videos.
+- `post` empties `#yt-video` once the video is published, so running it again can't upload the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- If YouTube refuses the details after the upload, the video stays as a private draft in Studio, and `post` says so.
+- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the title, the description, the visibility and the text with the user before running them.
+- It uses Studio's own services: its InnerTube client signs the calls and handles Google's re-authentication prompts, and its BotGuard attestation object attests the upload and the publish, so the adapter never reads tokens or cookies.
+- These are YouTube's internal endpoints and page internals, so a YouTube update can break them.
+
+Status (2026-11-16): `post` uploaded an 8-second, 11 MB video and published it as private. Read back from Studio, it had the title and description, was out of draft, not made for kids and processed. `comment` was refused on the private video, as YouTube does, then posted once the video was switched to unlisted, and showed in Studio. The video was then deleted. Public visibility hasn't been tried.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
