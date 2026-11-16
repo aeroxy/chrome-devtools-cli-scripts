@@ -244,6 +244,35 @@ Things to know:
 
 Status (2026-11-16): `post` uploaded an 8-second, 11 MB video and published it as private. Read back from Studio, it had the title and description, was out of draft, not made for kids and processed. `comment` was refused on the private video, as YouTube does, then posted once the video was switched to unlisted, and showed in Studio. The video was then deleted. Public visibility hasn't been tried.
 
+## reddit.js
+
+Posts text and link posts and comments as you on Reddit, through the endpoints Reddit's own web app uses, in a signed-in tab. Both functions publish.
+
+| Function | What it does |
+| --- | --- |
+| `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post), `text` (the body, in Markdown). |
+| `comment` | Posts a comment, in Markdown, on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit
+chrome-devtools --target <name> adapter reddit.js post -a title="..." -a url="https://..."
+chrome-devtools --target <name> navigate <url from post>
+chrome-devtools --target <name> adapter reddit.js comment -a post=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Run `post` on the subreddit's submit page and `comment` on the post's page. Reddit gets a Google reCAPTCHA Enterprise token when you press each form's button, and these functions ask that form's own code for one.
+- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one.
+- `text` is Markdown in both functions, and a link post can have a body too.
+- `post` sets no flair and no NSFW or spoiler tag, so it fails in a subreddit that requires flair.
+- Let the page load with its tab showing (`select-page`). Once, a Reddit page that loaded in a background tab froze until the tab was shown, and every chrome-devtools command waited behind it.
+- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the subreddit, the title, the link and the text with the user before running them.
+- Every request carries Reddit's CSRF token. Reddit's own scripts read it from the `csrf_token` cookie, and the adapter does the same inside the page, never returning or logging it. It touches no other cookie.
+- These are Reddit's internal endpoints and page internals, so a Reddit update can break them.
+
+Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
