@@ -13,6 +13,12 @@
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js post -a title="..." -a description="..." [-a hashtags="AI工具, 大模型"] [-a visibility=everyone|friends|only_me]
 //   chrome-devtools --target <name> navigate https://www.xiaohongshu.com/explore
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js comment -a note=<url from post> -a text="..."
+//   chrome-devtools --target <name> navigate https://creator.xiaohongshu.com/new/note-manager
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js recent [-a limit=10]
+//   chrome-devtools --target <name> navigate https://www.xiaohongshu.com/explore
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js comments -a note=<url from post or recent>
+//
+// recent and comments only read. recent runs on the creator site and lists your latest notes, newest first, up to 10 (the note manager's first page), with id, a url that opens the note, date and title; the note manager gives titles, not the notes' text. comments runs on www.xiaohongshu.com and lists the first comments on a note, marking yours with mine. RedNote wants the xsec_token in the note's link for that, so pass a url from post or recent.
 //
 // prepare adds a hidden file input for fill to put the video in. The publish page's own input would start the page's uploader instead.
 //
@@ -198,16 +204,24 @@ async function findTopics(names) {
   return topics;
 }
 
-// A link that opens the note. RedNote's note pages want the xsec_token the note manager lists with each note; the share_link in the publish answer has none and shows "page isn't available". The note is published by now, so a failed lookup falls back to the plain link instead of failing post, which an agent might then retry.
+// Your latest notes, newest first, as the creator site's note manager lists them.
+async function postedNotes() {
+  const body = await call('GET', `${CREATOR}/api/galaxy/v2/creator/note/user/posted`, { tab: 0, page: 0 });
+  return body.data?.notes ?? [];
+}
+
+// A link that opens a note from the note manager's list. RedNote's note pages want the xsec_token the list gives with each note.
+const noteUrl = (note) => `https://www.xiaohongshu.com/explore/${note.id}${note.xsec_token ? `?xsec_token=${encodeURIComponent(note.xsec_token)}&xsec_source=${note.xsec_source || 'pc_creatormng'}` : ''}`;
+
+// A link that opens the new note. The share_link in the publish answer has no xsec_token and shows "page isn't available". The note is published by now, so a failed lookup falls back to the plain link instead of failing post, which an agent might then retry.
 async function noteLink(id) {
   try {
-    const body = await call('GET', `${CREATOR}/api/galaxy/v2/creator/note/user/posted`, { tab: 0, page: 0 });
-    const note = (body.data?.notes ?? []).find((n) => n.id === id);
-    if (note?.xsec_token) return `https://www.xiaohongshu.com/explore/${id}?xsec_token=${encodeURIComponent(note.xsec_token)}&xsec_source=${note.xsec_source || 'pc_creatormng'}`;
+    const note = (await postedNotes()).find((n) => n.id === id);
+    if (note) return noteUrl(note);
   } catch {
     // Reported by returning the link without a token.
   }
-  return `https://www.xiaohongshu.com/explore/${id}`;
+  return noteUrl({ id });
 }
 
 // A note's 24-character id, from the id itself or a note URL (/explore/<id>, /discovery/item/<id>, /user/profile/<user>/<id>).
@@ -297,6 +311,35 @@ async function post(ctx) {
   if (!res.data?.id) throw new Error(`RedNote did not publish the note: ${res.msg || JSON.stringify(res).slice(0, 200)}`);
   input.value = '';
   return { id: res.data.id, url: await noteLink(res.data.id), visibility, title, hashtags: topics.map((t) => t.name) };
+}
+
+// How many items a list function returns: limit, from 1 to 10 (the note manager's first page), 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 10);
+
+// Your latest notes, newest first, with links that open them. The note manager gives titles, not the notes' text. A note id starts with its creation time in seconds, as 8 hex digits.
+async function recent(ctx) {
+  if (location.hostname !== 'creator.xiaohongshu.com') throw new Error('recent runs on the creator site. Open https://creator.xiaohongshu.com/new/note-manager in this tab first.');
+  return (await postedNotes()).slice(0, limitFrom(ctx.args.limit)).map((n) => ({ id: n.id, url: noteUrl(n), date: new Date(parseInt(n.id.slice(0, 8), 16) * 1000).toISOString(), title: n.display_title }));
+}
+
+// The first comments on a note, marking yours, as the note page loads them. RedNote asks for the xsec_token in the note's link, so pass a link that has one, such as url from post or recent.
+async function comments(ctx) {
+  if (location.hostname !== 'www.xiaohongshu.com') throw new Error('comments runs on www.xiaohongshu.com. Navigate this tab there first, for example to https://www.xiaohongshu.com/explore');
+  const id = noteId(ctx.args.note);
+  const token = new URL(String(ctx.args.note), 'https://www.xiaohongshu.com').searchParams.get('xsec_token') ?? '';
+  const [page, me] = await Promise.all([
+    call('GET', `${EDITH}/api/sns/web/v2/comment/page`, { note_id: id, cursor: '', top_comment_id: '', image_formats: 'jpg,webp,avif', xsec_token: token }),
+    call('GET', `${EDITH}/api/sns/web/v2/user/me`),
+  ]);
+  // The www page's client hands back camelCase keys; the creator site's doesn't, so both spellings are read.
+  const myId = me.data?.userId ?? me.data?.user_id;
+  return {
+    note: id,
+    comments: (page.data?.comments ?? []).map((c) => {
+      const user = c.userInfo ?? c.user_info ?? {};
+      return { id: c.id, author: user.nickname, mine: myId ? (user.userId ?? user.user_id) === myId : null, text: c.content };
+    }),
+  };
 }
 
 // Comment as you on a note. Same request the note page sends.

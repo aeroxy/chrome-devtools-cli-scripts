@@ -10,6 +10,10 @@
 //   chrome-devtools --target <name> fill '#ig-video' clip.mp4
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js post -a caption="..."
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js comment -a post=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js recent [-a limit=10]
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js comments -a post=<url>
+//
+// recent and comments only read. recent lists your latest posts, newest first, with id, url, date and caption, through the query your profile's grid uses. comments lists the first comments on a post, marking yours with mine.
 //
 // prepare adds a hidden file input for fill to put the video in.
 //
@@ -96,6 +100,46 @@ async function post(ctx) {
   if (res?.status !== 'ok' || !res.media?.pk) throw new Error(`Instagram did not publish the Reel: ${res?.message || res?.error_title || `status ${res?.status}`}`);
   input.value = '';
   return { id: String(res.media.pk), url: `https://www.instagram.com/reel/${res.media.code}/`, caption };
+}
+
+// How many items a list function returns: limit, from 1 to 50, 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
+
+// Your latest posts, newest first, through the query your profile's grid uses. Relay hides query results behind the grid's fragments, so this asks the page's Relay network for the response itself, with the variables Relay itself provides.
+async function recent(ctx) {
+  const limit = limitFrom(ctx.args.limit);
+  const query = ig('PolarisProfilePostsQuery.graphql');
+  const username = ig('PolarisConfig').getViewerData_DO_NOT_USE?.()?.username;
+  if (!username) throw new Error('Could not find the signed-in account in this page. Reload it, signed in, and retry.');
+  const provided = Object.fromEntries(Object.entries(query.params.providedVariables ?? {}).map(([name, provider]) => [name, provider.get()]));
+  const variables = { data: { count: limit, include_relationship_info: true, latest_besties_reel_media: true, latest_reel_media: true }, username, first: limit, after: null, before: null, last: null, ...provided };
+  const responses = await within(
+    new Promise((resolve, reject) => {
+      const out = [];
+      ig('CometRelayEnvironmentFactory').defaultEnvironment.getNetwork().execute(query.params, variables, { force: true }).subscribe({ next: (r) => out.push(r), error: reject, complete: () => resolve(out) });
+    }),
+    60,
+    'Listing your posts'
+  );
+  const connection = responses.flat(2).map((r) => r?.data?.xdt_api__v1__feed__user_timeline_graphql_connection).find(Boolean);
+  if (!connection) throw new Error('Instagram did not list your posts. Reload the tab and retry.');
+  return connection.edges
+    .map((e) => e.node)
+    .sort((a, b) => b.taken_at - a.taken_at)
+    .map((m) => ({ id: String(m.pk), url: `https://www.instagram.com/${m.product_type === 'clips' ? 'reel' : 'p'}/${m.code}/`, date: new Date(m.taken_at * 1000).toISOString(), text: m.caption?.text ?? '' }));
+}
+
+// The first comments on a post, marking yours, as the post page loads them.
+async function comments(ctx) {
+  const id = mediaId(ctx.args.post);
+  const viewer = String(ig('PolarisConfig').getViewerId());
+  let res;
+  try {
+    res = await ig('PolarisInstapi').apiGet('/api/v1/media/{media_id}/comments/', { path: { media_id: id }, query: { can_support_threading: true, permalink_enabled: false } });
+  } catch (error) {
+    throw new Error(`Instagram did not list the comments: ${error?.message || `HTTP ${error?.statusCode ?? 'error'}`}`);
+  }
+  return { post: id, comments: (res.data?.comments ?? []).map((c) => ({ id: String(c.pk), author: c.user?.username, mine: String(c.user_id ?? c.user?.pk ?? c.user?.id) === viewer, text: c.text })) };
 }
 
 // Comment as you on a post. Same mutation the post page sends.

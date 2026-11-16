@@ -10,6 +10,10 @@
 //   chrome-devtools --target <name> fill '#yt-video' clip.mp4
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js post -a title="..." [-a description="..."] [-a visibility=public|unlisted|private]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js comment -a video=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js recent [-a limit=10]
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js comments -a video=<url>
+//
+// recent and comments only read. recent lists your latest uploads, newest first, with id, url, date, visibility, title and description, as Studio's Content page does. comments lists the newest published comments on one of your videos, marking yours with mine.
 //
 // prepare adds a hidden file input for fill to put the video in.
 //
@@ -160,6 +164,41 @@ async function post(ctx) {
   }
   input.value = '';
   return { id, url: `https://youtu.be/${id}`, visibility, title };
+}
+
+// How many items a list function returns: limit, from 1 to 50, 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
+
+// Your latest uploads, newest first, as Studio's Content page lists them.
+async function recent(ctx) {
+  const res = await innertube('creator/list_creator_videos', {
+    filter: { and: { operands: [{ channelIdIs: { value: window.ytcfg.get('CHANNEL_ID') } }, { videoOriginIs: { value: 'VIDEO_ORIGIN_UPLOAD' } }] } },
+    order: 'VIDEO_ORDER_DISPLAY_TIME_DESC',
+    pageSize: limitFrom(ctx.args.limit),
+    mask: { videoId: true, title: true, description: true, timeCreatedSeconds: true, timePublishedSeconds: true, privacy: true },
+  });
+  return (res?.videos ?? []).map((v) => ({
+    id: v.videoId,
+    url: `https://youtu.be/${v.videoId}`,
+    date: new Date(Number(v.timePublishedSeconds || v.timeCreatedSeconds) * 1000).toISOString(),
+    visibility: String(v.privacy ?? '').replace('VIDEO_PRIVACY_', '').toLowerCase(),
+    title: v.title,
+    text: v.description,
+  }));
+}
+
+// The newest comments on one of your videos, marking yours. Studio lists comments only for your own videos, and only published ones.
+async function comments(ctx) {
+  const id = videoId(ctx.args.video);
+  const res = await innertube('comment/get_comments', { sortOrder: 'MOST_RELEVANT', searchQuery: '', maxReplies: 10, videoId: id, moderationState: 'PUBLISHED', commentsFilter: { sortBy: 'SORT_BY_NEWEST' } });
+  const items = res?.contents?.itemSectionRenderer?.contents ?? [];
+  return {
+    video: id,
+    comments: items
+      .map((item) => item.commentThreadRenderer?.comment?.commentRenderer)
+      .filter(Boolean)
+      .map((c) => ({ id: c.commentId, author: c.authorText?.simpleText, mine: Boolean(c.viewerIsAuthor), text: (c.contentText?.runs ?? []).map((r) => r.text).join('') })),
+  };
 }
 
 // Comment as you on one of your videos, the way Studio's Comments page does.

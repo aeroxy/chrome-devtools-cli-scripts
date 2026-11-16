@@ -5,12 +5,17 @@
 
 // Post a text or link post to a subreddit and comment on posts as you, through the endpoints Reddit's own web app uses, in a signed-in tab.
 //
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js rules -a subreddit=<name>
 //   chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit
-//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js post -a title="..." [-a url="https://..."] [-a text="..."]
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js post -a title="..." [-a url="https://..."] [-a text="..."] [-a flair=<id from rules>]
 //   chrome-devtools --target <name> navigate <url from post>
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comment -a post=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js recent [-a limit=10]
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comments -a post=<url>
 //
-// post publishes to the subreddit whose submit page the tab is on and returns the post's id and url. With url it's a link post; without, a text post. text is the body, in Markdown, and is optional for both. post sets no flair, so it fails in a subreddit that requires one.
+// rules, recent and comments only read, on any www.reddit.com page. rules shows what a subreddit asks of a post: the post types it takes (postTypes: any, link or self), the posting requirements it has set (requirements, such as is_flair_required, body_restriction_policy, title_blacklisted_strings or domain_whitelist), its rules and its post flairs with their ids. recent lists your latest posts, newest first, with id, url, date, subreddit, title, link and text. comments lists the newest top-level comments on a post, marking yours with mine; they come back in Markdown, so a pasted link can read [url](url).
+//
+// post publishes to the subreddit whose submit page the tab is on and returns the post's id and url. With url it's a link post; without, a text post. text is the body, in Markdown, and is optional for both, unless the subreddit requires one. flair is the id of one of the subreddit's flairs from rules; post sends it with the flair's text, as the submit form does. A subreddit that requires a flair refuses a post without one.
 //
 // comment posts a comment, in Markdown, on the post the tab is showing and returns its id and url. Pass the post's URL as post too: comment checks it against the page so it can't comment on the wrong post.
 //
@@ -46,6 +51,27 @@ function postId(value) {
 
 const markdown = (value) => String(value ?? '').replace(/\r\n?/g, '\n').trim();
 
+// How many items a list function returns: limit, from 1 to 50, 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
+
+// A GET to Reddit's JSON API as the signed-in user. Reads need no CSRF token.
+async function getJson(path) {
+  const res = await fetch(path, { credentials: 'include', headers: { Accept: 'application/json' } });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json) throw new Error(`Reddit answered ${path.split('?')[0]} with HTTP ${res.status}`);
+  return json;
+}
+
+const me = async () => (await getJson('/api/me.json')).data?.name ?? null;
+
+// Flair texts come HTML-escaped in Reddit's flair list; the submit form shows and sends them unescaped.
+const unescapeHtml = (s) => String(s ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+
+async function flairTemplates(subreddit) {
+  const list = await getJson(`/r/${subreddit}/api/link_flair_v2.json`).catch(() => []);
+  return (Array.isArray(list) ? list : []).map((f) => ({ id: f.id, text: unescapeHtml(f.text), editable: Boolean(f.text_editable), modOnly: Boolean(f.mod_only) }));
+}
+
 async function post(ctx) {
   const button = document.querySelector('r-post-form-submit-button');
   const form = button?.form;
@@ -56,6 +82,13 @@ async function post(ctx) {
   const url = String(ctx.args.url ?? '').trim();
   if (url && !/^https?:\/\/\S+$/i.test(url)) throw new Error('url must be a full http(s) link');
   const text = markdown(ctx.args.text);
+  // A flair id from rules. The submit form sends the flair's id with its text.
+  const flairId = String(ctx.args.flair ?? '').trim();
+  let flair;
+  if (flairId) {
+    flair = (await flairTemplates(subreddit)).find((f) => f.id === flairId);
+    if (!flair) throw new Error(`r/${subreddit} has no flair with id ${flairId}. Run rules -a subreddit=${subreddit} for its flairs.`);
+  }
 
   const input = {
     isNsfw: false,
@@ -68,6 +101,7 @@ async function post(ctx) {
     ...(url ? { link: { url } } : {}),
     subredditName: subreddit,
     correlationId: crypto.randomUUID(),
+    ...(flair ? { flair: { id: flair.id, text: flair.text } } : {}),
   };
   const res = await fetch('/svc/shreddit/graphql', {
     method: 'POST',
@@ -82,6 +116,54 @@ async function post(ctx) {
     throw new Error(`Reddit did not publish the post: ${problems.join('; ') || `HTTP ${res.status}`}`);
   }
   return { id: result.post.id, url: `https://www.reddit.com${result.post.permalink}`, subreddit, title, type: url ? 'link' : 'text' };
+}
+
+// What a subreddit asks of a post: the post types it takes, its posting requirements (flair, title and body rules, allowed domains), its rules and its post flairs. post takes a flair's id.
+async function rules(ctx) {
+  const subreddit = String(ctx.args.subreddit ?? '').replace(/^\/?r\//i, '').trim();
+  if (!subreddit) throw new Error('subreddit is required, e.g. -a subreddit=rust');
+  const [about, requirements, list, flairs] = await Promise.all([
+    getJson(`/r/${subreddit}/about.json`),
+    getJson(`/api/v1/${subreddit}/post_requirements.json`),
+    getJson(`/r/${subreddit}/about/rules.json`),
+    flairTemplates(subreddit),
+  ]);
+  return {
+    subreddit: about.data?.display_name ?? subreddit,
+    subscribers: about.data?.subscribers,
+    // any, link (link posts only) or self (text posts only).
+    postTypes: about.data?.submission_type,
+    // Only the requirements the subreddit has set.
+    requirements: Object.fromEntries(Object.entries(requirements).filter(([, v]) => v !== null && v !== false && v !== '' && !(Array.isArray(v) && !v.length))),
+    rules: (list.rules ?? []).map((r) => ({ name: r.short_name, appliesTo: r.kind, description: r.description })),
+    flairs,
+  };
+}
+
+// Your latest posts, newest first.
+async function recent(ctx) {
+  const name = await me();
+  if (!name) throw new Error('This tab is not signed in to Reddit.');
+  const listing = await getJson(`/user/${name}/submitted.json?limit=${limitFrom(ctx.args.limit)}&raw_json=1`);
+  return (listing.data?.children ?? []).map(({ data: p }) => ({
+    id: p.name,
+    url: `https://www.reddit.com${p.permalink}`,
+    date: new Date(p.created_utc * 1000).toISOString(),
+    subreddit: p.subreddit,
+    title: p.title,
+    link: p.is_self ? null : p.url,
+    text: p.selftext,
+  }));
+}
+
+// The newest top-level comments on a post, marking yours. Comments come back in Markdown, so a pasted link can read [url](url).
+async function comments(ctx) {
+  const id = postId(ctx.args.post);
+  const [name, thread] = await Promise.all([me(), getJson(`/comments/${id}.json?raw_json=1&limit=100&depth=1&sort=new`)]);
+  return {
+    post: `t3_${id}`,
+    comments: (thread[1]?.data?.children ?? []).filter((c) => c.kind === 't1').map(({ data: c }) => ({ id: c.name, author: c.author, mine: c.author === name, text: c.body })),
+  };
 }
 
 async function comment(ctx) {

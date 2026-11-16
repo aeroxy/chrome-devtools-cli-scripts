@@ -80,13 +80,15 @@ Things to know:
 
 ## tiktok.js
 
-Posts videos and comments as you through the web API TikTok Studio uses, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+Posts videos and comments as you through the web API TikTok Studio uses, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#tiktok-video`, for `fill` to put the video in. Studio's own upload input would start Studio's uploader instead. |
 | `post` | Uploads the video in `#tiktok-video`, publishes it and returns its `id` and `url`. Args: `description`, `hashtags` (separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs `description`, `hashtags` or both. |
 | `comment` | Posts a comment as you and returns its id. Args: `video` (the video's URL, such as `url` from `post`), `text`. |
+| `recent` | Your latest videos, newest first: id, url, date, caption. Args: `limit` (default 10, at most 50). |
+| `comments` | The first 50 comments on a video, with `mine` marking yours. Args: `video` (its URL). |
 
 ```bash
 chrome-devtools --target <name> navigate https://www.tiktok.com/tiktokstudio/content
@@ -106,19 +108,22 @@ Things to know:
 - `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the text and the visibility with the user before running them.
 - TikTok's own scripts in the page sign every call, so the adapter never reads tokens or cookies. The temporary upload credentials TikTok hands `post` are used only inside the page: never returned, logged or written to disk.
 - The upload region comes from the page, the way Studio's uploader reads it. Only the Singapore region has been tried.
+- TikTok has shown a video's comment count as 0 while the video had comments, so check with `comments`, not the count.
 - These are TikTok's undocumented endpoints, so a TikTok update can break them.
 
-Status (2026-11-16): `post` published an 11 MB video (three upload slices) as Only you on a Singapore-region account. The video page showed both hashtags as links and a cover, and the test post was then deleted. `comment` posted a comment on a public video (TikTok returned its id), which was then deleted. A signed API call was also checked with the tab in the background.
+Status (2026-11-16): `post` published an 11 MB video (three upload slices) as Only you on a Singapore-region account. The video page showed both hashtags as links and a cover, and the test post was then deleted. `comment` posted a comment on a public video (TikTok returned its id), which was then deleted. A signed API call was also checked with the tab in the background. `recent` and `comments` were checked against the account's own videos: `comments` found both comments on a video whose count TikTok showed as 0.
 
 ## rednote.js
 
-Posts video notes and comments as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+Posts video notes and comments as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#rednote-video`, for `fill` to put the video in. The publish page's own input would start the page's uploader instead. |
 | `post` | Uploads the video in `#rednote-video`, publishes it as a video note and returns its `id` and a `url` that opens it. Args: `title` (at most 20 characters), `description`, `hashtags` (RedNote topic names, separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs at least one of `title`, `description` and `hashtags`. |
 | `comment` | Posts a comment as you and returns its id. Args: `note` (the note's URL, such as `url` from `post`, or its 24-character id), `text`. |
+| `recent` | Your latest notes, newest first, up to 10: id, a `url` that opens it, date, title. Args: `limit` (default 10). |
+| `comments` | The first comments on a note, with `mine` marking yours. Args: `note` (a URL from `post` or `recent`). |
 
 ```bash
 chrome-devtools --target <name> select-page
@@ -141,21 +146,24 @@ Things to know:
 - Some topics carry a campaign (活动). The publish page joins it when you pick such a topic from its list; `post` doesn't.
 - `post` empties `#rednote-video` once the note is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
 - The `url` from `post` carries the `xsec_token` RedNote's note pages ask for, from the note manager's list. The share link RedNote returns on publishing has none, and for the test note it showed "page isn't available".
+- `recent` runs on the creator site, like `post`, and `comments` on `www.xiaohongshu.com`, like `comment`. The note manager `recent` reads gives titles, not the notes' text. `comments` needs the `xsec_token` in a link from `post` or `recent`.
 - `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the title, the text and the visibility with the user before running them.
 - The page's own HTTP client signs every call, so the adapter never reads tokens or cookies. The upload permits RedNote hands `post` are used only inside the page: never returned, logged or written to disk.
 - It relies on RedNote's undocumented endpoints and on page internals (the publish page's `window._publisher` and the page's HTTP client module), so a RedNote update can break it.
 
-Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried.
+Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried. `recent` and `comments` were checked against the account's own notes, and `comments` marked both of a note's link comments as yours.
 
 ## x.js
 
-Posts and replies as you on X, through the API client X's own web app uses, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `reply` publish.
+Posts and replies as you on X, through the API client X's own web app uses, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `replies` only read; `post` and `reply` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#x-media`, for `fill` to put one image, GIF or video in. A text-only post doesn't need it. |
 | `post` | Publishes `text`, with the file in `#x-media` attached if there is one, and returns the post's `id` and `url`. Args: `text`. It needs text, media or both. |
 | `reply` | Posts a reply as you and returns its `id` and `url`. Args: `to` (the post's URL, such as `url` from `post`), `text`. |
+| `recent` | Your latest posts, newest first, as your profile's Posts tab lists them, with your replies in your own threads and without reposts: id, url, date, `replyTo` (null unless it replies to a post), text with links expanded from t.co. Args: `limit` (default 10, at most 50). |
+| `replies` | The replies X shows under a post, with `mine` marking yours and links expanded. Args: `post` (its URL). |
 
 ```bash
 chrome-devtools --target <name> navigate https://x.com/home
@@ -177,17 +185,19 @@ Things to know:
 - It borrows X's own API client from the page, which adds the bearer token, the CSRF token and the transaction id, so the adapter never reads tokens or cookies. The query id and feature list for posting come from X's code in the page, so they follow X's updates.
 - These are X's internal endpoints and page internals, so an X update can break them.
 
-Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image upload was also tried, without posting it.
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image upload was also tried, without posting it. `recent` and `replies` were checked against the account's own posts: `replies` found both link replies under a post, with their links expanded from t.co.
 
 ## instagram.js
 
-Posts a video as a Reel and comments as you on Instagram, through Instagram's own web code, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+Posts a video as a Reel and comments as you on Instagram, through Instagram's own web code, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#ig-video`, for `fill` to put the video in. |
 | `post` | Uploads the video in `#ig-video`, publishes it as a Reel and returns its `id` and `url`. Args: `caption`. |
 | `comment` | Posts a comment as you and returns its id. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+| `recent` | Your latest posts, newest first: id, url, date, caption. Args: `limit` (default 10, at most 50). |
+| `comments` | The first comments on a post, with `mine` marking yours. Args: `post` (its URL). |
 
 ```bash
 chrome-devtools --target <name> navigate https://www.instagram.com/
@@ -210,17 +220,19 @@ Things to know:
 - It calls Instagram's own modules through the page's `require`, and those add the CSRF and session tokens, so the adapter never reads tokens or cookies.
 - These are Instagram's internal endpoints and page internals, so an Instagram update can break them.
 
-Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried.
+Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried. `recent` and `comments` were checked against the account's own Reels.
 
 ## youtube.js
 
-Uploads videos and comments on your videos as you on YouTube, through YouTube Studio's own web client, in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+Uploads videos and comments on your videos as you on YouTube, through YouTube Studio's own web client, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#yt-video`, for `fill` to put the video in. |
 | `post` | Uploads the video in `#yt-video`, publishes it and returns its `id` and `url`. Args: `title` (required), `description`, `visibility` (`public`, `unlisted` or `private`; default `public`). |
 | `comment` | Posts a comment as you on a video on your own channel and returns its id. Args: `video` (the video's URL, such as `url` from `post`, or its id), `text`. |
+| `recent` | Your latest uploads, newest first: id, url, date, visibility, title, description. Args: `limit` (default 10, at most 50). |
+| `comments` | The newest published comments on one of your videos, with `mine` marking yours. Args: `video`. |
 
 ```bash
 chrome-devtools --target <name> navigate https://studio.youtube.com/
@@ -242,18 +254,22 @@ Things to know:
 - It uses Studio's own services: its InnerTube client signs the calls and handles Google's re-authentication prompts, and its BotGuard attestation object attests the upload and the publish, so the adapter never reads tokens or cookies.
 - These are YouTube's internal endpoints and page internals, so a YouTube update can break them.
 
-Status (2026-11-16): `post` uploaded an 8-second, 11 MB video and published it as private. Read back from Studio, it had the title and description, was out of draft, not made for kids and processed. `comment` was refused on the private video, as YouTube does, then posted once the video was switched to unlisted, and showed in Studio. The video was then deleted. Public visibility hasn't been tried.
+Status (2026-11-16): `post` uploaded an 8-second, 11 MB video and published it as private. Read back from Studio, it had the title and description, was out of draft, not made for kids and processed. `comment` was refused on the private video, as YouTube does, then posted once the video was switched to unlisted, and showed in Studio. The video was then deleted. Public visibility hasn't been tried. `recent` and `comments` were checked against the channel's own videos.
 
 ## reddit.js
 
-Posts text and link posts and comments as you on Reddit, through the endpoints Reddit's own web app uses, in a signed-in tab. Both functions publish.
+Posts text and link posts and comments as you on Reddit, through the endpoints Reddit's own web app uses, in a signed-in tab. `post` and `comment` publish; `rules`, `recent` and `comments` only read.
 
 | Function | What it does |
 | --- | --- |
-| `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post), `text` (the body, in Markdown). |
+| `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post), `text` (the body, in Markdown), `flair` (a flair id from `rules`). |
 | `comment` | Posts a comment, in Markdown, on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+| `rules` | What a subreddit asks of a post: the post types it takes (`postTypes`: `any`, `link` or `self`), the requirements it has set (flair, title and body rules, allowed domains), its rules, and its post flairs with their ids. Args: `subreddit`. |
+| `recent` | Your latest posts, newest first: id, url, date, subreddit, title, link, text. Args: `limit` (default 10, at most 50). |
+| `comments` | The newest top-level comments on a post, in Markdown, with `mine` marking yours. Args: `post` (its URL). |
 
 ```bash
+chrome-devtools --target <name> adapter reddit.js rules -a subreddit=<subreddit>
 chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit
 chrome-devtools --target <name> adapter reddit.js post -a title="..." -a url="https://..."
 chrome-devtools --target <name> navigate <url from post>
@@ -265,23 +281,25 @@ Things to know:
 - Run `post` on the subreddit's submit page and `comment` on the post's page. Reddit gets a Google reCAPTCHA Enterprise token when you press each form's button, and these functions ask that form's own code for one.
 - `comment` checks that the tab shows the post you named, so it can't comment on the wrong one.
 - `text` is Markdown in both functions, and a link post can have a body too.
-- `post` sets no flair and no NSFW or spoiler tag, so it fails in a subreddit that requires flair.
+- Run `rules` before posting: a subreddit that requires a flair refuses a post without one, many require a body, and some bar words from titles. `post` sets no NSFW or spoiler tag.
 - Let the page load with its tab showing (`select-page`). Once, a Reddit page that loaded in a background tab froze until the tab was shown, and every chrome-devtools command waited behind it.
 - `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the subreddit, the title, the link and the text with the user before running them.
 - Every request carries Reddit's CSRF token. Reddit's own scripts read it from the `csrf_token` cookie, and the adapter does the same inside the page, never returning or logging it. It touches no other cookie.
 - These are Reddit's internal endpoints and page internals, so a Reddit update can break them.
 
-Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted.
+Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. Posting with `flair` hasn't been tried; the field comes from the submit form's own code.
 
 ## linkedin.js
 
-Posts and comments as you on LinkedIn, by driving LinkedIn's own post composer and comment box in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+Posts and comments as you on LinkedIn, by driving LinkedIn's own post composer and comment box in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
 | `prepare` | Adds a hidden file input, `#li-media`, for `fill` to put one image or video in. A text-only post doesn't need it. |
 | `post` | Publishes `text` through the feed's Start a post composer, with the file in `#li-media` attached if there is one, and returns the post's `id` and `url`. Args: `text`. It needs text, media or both. |
 | `comment` | Posts a comment as you on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+| `recent` | Your latest posts, newest first, from your activity page, without reposts or other activity: id, url, date, text. Args: `limit` (default 10, at most 50). |
+| `comments` | The comments the post's page shows, with `mine` marking yours. Args: `post` (its URL). |
 
 ```bash
 chrome-devtools --target <name> navigate https://www.linkedin.com/feed/
@@ -308,11 +326,12 @@ Things to know:
 - `post` empties `#li-media` once the post is published, so running it again can't post the same media twice. A page reload removes the input: run `prepare` and `fill` again.
 - `comment` checks that the tab shows the post you named, so it can't comment on the wrong one. Pass `post` as a URL: the CLI turns a bare 19-digit id into a rounded number, so `comment` refuses one.
 - The `url` from `comment` has the form LinkedIn's Copy link to comment uses. A link to the post with only `commentUrn` added opened the post without showing the comment.
+- `recent` runs on your activity page (`https://www.linkedin.com/in/me/recent-activity/all/`) and sees what the page has loaded, usually a few weeks. `comments` runs on the post's page, like `comment`.
 - `post` and `comment` publish immediately, publicly, and can't be undone from here. Agents: confirm the text, any image or video, and the post to comment on with the user first.
 - Both put the text in through LinkedIn's own editors and press LinkedIn's own buttons, so LinkedIn's code sends every request with its tokens, and the adapter never reads tokens or cookies. To learn the new post's id, `post` watches the page's requests after Post and reads only the id from the one that adds the post to your feed.
 - These are LinkedIn's page internals, so a LinkedIn update can break them.
 
-Status (2026-11-16): `post` published an 8-second, 11 MB video with text from the feed, and `comment` commented on it from the post's page. LinkedIn's own success toast linked to the same post URL `post` returned, and the reloaded post page showed the video, the text and the comment under the id `comment` returned. A second, text-only post had a line break, a blank line and two blank lines in a row, and a comment on it had a line break and a blank line; LinkedIn stored and showed both exactly as written. Both posts were then deleted, with their comments. Attaching an image was dry-run up to the Post button but not published.
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text from the feed, and `comment` commented on it from the post's page. LinkedIn's own success toast linked to the same post URL `post` returned, and the reloaded post page showed the video, the text and the comment under the id `comment` returned. A second, text-only post had a line break, a blank line and two blank lines in a row, and a comment on it had a line break and a blank line; LinkedIn stored and showed both exactly as written. Both posts were then deleted, with their comments. Attaching an image was dry-run up to the Post button but not published. `recent` and `comments` were checked against the account's own posts, and the dates `recent` reads from post ids matched when the posts were made.
 
 ## Adding a script
 

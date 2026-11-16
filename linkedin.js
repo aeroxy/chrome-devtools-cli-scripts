@@ -12,6 +12,11 @@
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/linkedin.js post -a text="..."
 //   chrome-devtools --target <name> navigate <url from post>
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/linkedin.js comment -a post=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/linkedin.js comments -a post=<url>
+//   chrome-devtools --target <name> navigate https://www.linkedin.com/in/me/recent-activity/all/
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/linkedin.js recent [-a limit=10]
+//
+// recent and comments only read. recent runs on your activity page and lists your latest posts, newest first, with id, url, date and text, leaving out reposts and other activity. It sees what the page has loaded, usually a few weeks. comments runs on the post's page and lists the comments it shows, marking yours with mine.
 //
 // prepare adds a hidden file input for fill to put one image or video in. A text-only post needs no prepare, fill or select-page.
 //
@@ -169,17 +174,61 @@ function commentUrl(urn) {
   return `https://www.linkedin.com/feed/update/urn:li:${thread}?commentUrn=${encode(urn)}&dashCommentUrn=${encode(`urn:li:fsd_comment:(${commentId},urn:li:${thread})`)}`;
 }
 
+// The post page's comment form and the post it belongs to, checked against the post named in value so nothing runs on the wrong post.
+async function postPage(value) {
+  const id = postId(value);
+  const form = await until(() => document.querySelector('form.comments-comment-box__form'), 15, `This runs on the post's page. Open ${value} in this tab first.`);
+  const thread = form.closest('[data-urn]');
+  if (!thread) throw new Error("This page's comment box isn't the one this adapter knows. LinkedIn has changed its post page and this adapter needs updating.");
+  if (!location.href.includes(id) && !thread.dataset.urn.includes(id)) throw new Error(`This tab shows ${thread.dataset.urn}, not post ${id}. Open that post's page first.`);
+  return { form, thread };
+}
+
+const commentsIn = (thread) => [...thread.querySelectorAll('[data-id^="urn:li:comment:"]')];
+
+// How many items a list function returns: limit, from 1 to 50, 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
+
+// Your latest posts, newest first, from your activity page, which also lists reposts and other activity: your own posts are the ones with an analytics link. The page loads more as it scrolls, so this sees what it has loaded, usually a few weeks. LinkedIn's post ids start with their creation time in milliseconds, shifted 22 bits.
+async function recent(ctx) {
+  if (!location.pathname.includes('/recent-activity/')) throw new Error('recent runs on your activity page. Open https://www.linkedin.com/in/me/recent-activity/all/ in this tab first.');
+  const items = await until(() => { const found = [...document.querySelectorAll('[role="listitem"]')]; return found.length ? found : null; }, 20, "Your activity page didn't list anything. Reload it and retry.");
+  const posts = new Map();
+  for (const item of items) {
+    const id = /urn:li:activity:(\d+)/.exec(item.querySelector('a[href*="/analytics/post-summary/urn:li:activity:"]')?.getAttribute('href') ?? '')?.[1];
+    if (id && !posts.has(id)) posts.set(id, item.querySelector('[data-testid="expandable-text-box"]')?.innerText.trim() ?? '');
+  }
+  return [...posts]
+    .sort(([a], [b]) => (BigInt(b) > BigInt(a) ? 1 : -1))
+    .slice(0, limitFrom(ctx.args.limit))
+    .map(([id, text]) => ({ id: `urn:li:activity:${id}`, url: `https://www.linkedin.com/feed/update/urn:li:activity:${id}/`, date: new Date(Number(BigInt(id) >> 22n)).toISOString(), text }));
+}
+
+// The comments the post's page shows, marking yours by the link on the page's own profile card, which appears a moment after the page. mine is null if the card never does. It sees only comments the page has loaded, the first ones under its sort.
+async function comments(ctx) {
+  const { thread } = await postPage(ctx.args.post);
+  const handle = (href) => /\/in\/([^/?#]+)/.exec(href ?? '')?.[1];
+  const card = await until(() => document.querySelector('a[class*="profile-card"][href*="/in/"], [class*="profile-card"] a[href*="/in/"]'), 10, 'no profile card').catch(() => null);
+  const me = handle(card?.getAttribute('href'));
+  return {
+    post: thread.dataset.urn,
+    comments: commentsIn(thread).map((c) => ({
+      id: c.dataset.id,
+      author: c.querySelector('.comments-comment-meta__description-title, .comments-post-meta__name-text')?.innerText.trim().split('\n')[0],
+      mine: me ? handle(c.querySelector('a[href*="/in/"]')?.getAttribute('href')) === me : null,
+      text: c.querySelector('.comments-comment-item__main-content, .update-components-text')?.innerText.trim() ?? '',
+    })),
+  };
+}
+
 async function comment(ctx) {
-  const id = postId(ctx.args.post);
   const text = plain(ctx.args.text);
   if (!text) throw new Error('text is required');
-  const form = await until(() => document.querySelector('form.comments-comment-box__form'), 15, `comment runs on the post's page. Open ${ctx.args.post} in this tab first.`);
-  const thread = form.closest('[data-urn]');
+  const { form, thread } = await postPage(ctx.args.post);
   const quill = form.querySelector('.ql-container')?.__quill;
-  if (!thread || !quill) throw new Error("This page's comment box isn't the one comment knows. LinkedIn has changed its post page and this adapter needs updating.");
-  if (!location.href.includes(id) && !thread.dataset.urn.includes(id)) throw new Error(`This tab shows ${thread.dataset.urn}, not post ${id}. Open the post you want to comment on first.`);
+  if (!quill) throw new Error("This page's comment box isn't the one comment knows. LinkedIn has changed its post page and this adapter needs updating.");
 
-  const comments = () => [...thread.querySelectorAll('[data-id^="urn:li:comment:"]')];
+  const comments = () => commentsIn(thread);
   const before = new Set(comments().map((c) => c.dataset.id));
   quill.setText(text, 'user');
   // The comment box passes its text on to the Comment button's code 300 ms after the last change. Pressing sooner could send an empty comment.

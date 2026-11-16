@@ -10,6 +10,10 @@
 //   chrome-devtools --target <name> fill '#tiktok-video' clip.mp4
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js post -a description="..." [-a hashtags="AITools, LLM"] [-a visibility=everyone|friends|only_me]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js comment -a video=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js recent [-a limit=10]
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js comments -a video=<url>
+//
+// recent and comments only read. recent lists your latest videos, newest first, with id, url, date and caption, as Studio's Posts page does. comments lists the first 50 comments on a video, marking yours with mine. Read the comments themselves: TikTok has shown a video's comment count as 0 while it had comments.
 //
 // prepare adds a hidden file input for fill to put the video in. Studio's own upload input would start Studio's uploader instead.
 //
@@ -260,6 +264,39 @@ async function post(ctx) {
   input.value = '';
   const id = String(result.item_id);
   return { id, url: account.handle ? `https://www.tiktok.com/@${account.handle}/video/${id}` : null, visibility, caption: text };
+}
+
+// How many items a list function returns: limit, from 1 to 50, 10 unless given.
+const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
+
+// Your latest videos, newest first, as Studio's Posts page lists them.
+async function recent(ctx) {
+  const account = studio();
+  const res = await request(
+    'POST',
+    '/tiktok/creator/manage/item_list/v1/',
+    { app_name: 'tiktok_creator_center', device_platform: 'web_pc' },
+    { cursor: 0, size: limitFrom(ctx.args.limit), query: { sort_orders: [{ field_name: 'post_time', order: 2 }], conditions: [], is_recent_posts: false } }
+  );
+  if (res.status_code !== 0) throw new Error(`TikTok did not list your videos: ${res.status_msg || `status ${res.status_code}`}`);
+  return (res.item_list ?? []).map((item) => ({
+    id: String(item.item_id),
+    url: `https://www.tiktok.com/@${account.handle}/video/${item.item_id}`,
+    date: new Date(Number(item.post_time) * 1000).toISOString(),
+    text: item.desc,
+  }));
+}
+
+// The first 50 comments on a video, as the video page's comment panel loads them, marking yours. Read the comments rather than the video's comment count, which TikTok has shown as 0 while comments were there.
+async function comments(ctx) {
+  const id = videoId(ctx.args.video);
+  const account = studio();
+  const res = await request('GET', '/api/comment/list/', { aweme_id: id, count: '50', cursor: '0' });
+  if (res.status_code !== 0) throw new Error(`TikTok did not list the comments: ${res.status_msg || `status ${res.status_code}`}`);
+  return {
+    video: id,
+    comments: (res.comments ?? []).map((c) => ({ id: String(c.cid), author: c.user?.unique_id, mine: String(c.user?.uid) === account.uid, text: c.text })),
+  };
 }
 
 // Comment as you on a video. Same request Studio sends from its Content page.
