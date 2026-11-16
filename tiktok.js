@@ -13,7 +13,7 @@
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js recent [-a limit=10]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/tiktok.js comments -a video=<url>
 //
-// recent and comments only read. recent lists your latest videos, newest first, with id, url, date and caption, as Studio's Posts page does. comments lists the first 50 comments on a video, marking yours with mine. Read the comments themselves: TikTok has shown a video's comment count as 0 while it had comments.
+// recent and comments only read. recent lists your latest videos, newest first, with id, url, date and caption, as Studio's Posts page does. comments lists the first 50 comments on a video, marking yours with mine. Read the comments themselves: TikTok has shown a video's comment count as 0 while it had comments. A comment just posted can take up to a minute to show there.
 //
 // prepare adds a hidden file input for fill to put the video in. Studio's own upload input would start Studio's uploader instead.
 //

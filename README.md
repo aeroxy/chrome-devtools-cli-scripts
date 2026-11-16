@@ -88,7 +88,7 @@ Posts videos and comments as you through the web API TikTok Studio uses, in a si
 | `post` | Uploads the video in `#tiktok-video`, publishes it and returns its `id` and `url`. Args: `description`, `hashtags` (separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs `description`, `hashtags` or both. |
 | `comment` | Posts a comment as you and returns its id. Args: `video` (the video's URL, such as `url` from `post`), `text`. |
 | `recent` | Your latest videos, newest first: id, url, date, caption. Args: `limit` (default 10, at most 50). |
-| `comments` | The first 50 comments on a video, with `mine` marking yours. Args: `video` (its URL). |
+| `comments` | The first 50 comments on a video, with `mine` marking yours. A comment just posted can take up to a minute to show. Args: `video` (its URL). |
 
 ```bash
 chrome-devtools --target <name> navigate https://www.tiktok.com/tiktokstudio/content
@@ -288,7 +288,7 @@ Things to know:
 - Every request carries Reddit's CSRF token. Reddit's own scripts read it from the `csrf_token` cookie, and the adapter does the same inside the page, never returning or logging it. It touches no other cookie.
 - These are Reddit's internal endpoints and page internals, so a Reddit update can break them.
 
-Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. Posting with `flair` hasn't been tried; the field comes from the submit form's own code.
+Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. A link post with a `flair` id from `rules` went up with that flair in a subreddit that requires one.
 
 ## linkedin.js
 
