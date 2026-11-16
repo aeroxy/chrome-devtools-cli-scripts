@@ -200,7 +200,7 @@ async function post(ctx) {
   const text = captionFrom(ctx.args);
   if (!text) throw new Error('description or hashtags is required');
   const visibility = String(ctx.args.visibility ?? 'everyone');
-  if (!(visibility in VISIBILITY)) throw new Error('visibility must be everyone, friends or only_me');
+  if (!Object.hasOwn(VISIBILITY, visibility)) throw new Error('visibility must be everyone, friends or only_me');
   const account = studio();
 
   const auth = await request('GET', '/api/v1/video/upload/auth/');
