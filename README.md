@@ -273,6 +273,47 @@ Things to know:
 
 Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted.
 
+## linkedin.js
+
+Posts and comments as you on LinkedIn, by driving LinkedIn's own post composer and comment box in a signed-in tab. `prepare` only adds a file input to the page; `post` and `comment` publish.
+
+| Function | What it does |
+| --- | --- |
+| `prepare` | Adds a hidden file input, `#li-media`, for `fill` to put one image or video in. A text-only post doesn't need it. |
+| `post` | Publishes `text` through the feed's Start a post composer, with the file in `#li-media` attached if there is one, and returns the post's `id` and `url`. Args: `text`. It needs text, media or both. |
+| `comment` | Posts a comment as you on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+
+```bash
+chrome-devtools --target <name> navigate https://www.linkedin.com/feed/
+chrome-devtools --target <name> adapter linkedin.js prepare
+chrome-devtools --target <name> fill '#li-media' clip.mp4
+chrome-devtools --target <name> select-page
+chrome-devtools --target <name> adapter linkedin.js post -a text="..."
+chrome-devtools --target <name> navigate <url from post>
+chrome-devtools --target <name> adapter linkedin.js comment -a post=<url from post> -a text="..."
+```
+
+Things to know:
+
+- Attaching media needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
+- Run `post` on the feed and `comment` on the post's own page. LinkedIn serves the post page from its older web app, whose comment box differs from the feed's.
+- LinkedIn's media editor loads a file only while its tab is showing, so `post` refuses to attach one in a background tab. Run `select-page` straight before `post`, with Chrome not hidden behind other windows: in testing, the tab sometimes went back to hidden within seconds. A text-only post and `comment` don't need the tab showing: in dry runs from a background tab, both got as far as LinkedIn's Post and Comment buttons.
+- `post` finds LinkedIn's buttons by their English names (Start a post, Media, Next, Post), so it needs LinkedIn's interface in English.
+- Each line of `text` is a line of the post or comment, blank lines included. Pasting text into LinkedIn's composer drops blank lines; `post` doesn't paste but builds the lines in LinkedIn's editor, one paragraph per line and an empty one per blank line, as pressing Enter does.
+- Pass real line breaks in `text`: the CLI keeps a typed `\n` as a backslash and an `n`. In bash, a quoted string that spans lines works, as does `-a text="$(printf 'one\n\ntwo')"`.
+- LinkedIn links hashtags and web addresses itself. An `@name` stays plain text: tagging someone means picking them from LinkedIn's suggestions, which `post` doesn't do.
+- `post` leaves the audience and comment settings as the composer shows them. In testing, that was Anyone for both.
+- `post` stops if a composer is already open, or if the composer opens with a saved draft in it, so it never posts over your draft.
+- `post` returns once LinkedIn has added the post to your feed. For a video, that's after LinkedIn has uploaded and processed it, so a long video takes a while; `post` waits up to 10 minutes.
+- `post` empties `#li-media` once the post is published, so running it again can't post the same media twice. A page reload removes the input: run `prepare` and `fill` again.
+- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one. Pass `post` as a URL: the CLI turns a bare 19-digit id into a rounded number, so `comment` refuses one.
+- The `url` from `comment` has the form LinkedIn's Copy link to comment uses. A link to the post with only `commentUrn` added opened the post without showing the comment.
+- `post` and `comment` publish immediately, publicly, and can't be undone from here. Agents: confirm the text, any image or video, and the post to comment on with the user first.
+- Both put the text in through LinkedIn's own editors and press LinkedIn's own buttons, so LinkedIn's code sends every request with its tokens, and the adapter never reads tokens or cookies. To learn the new post's id, `post` watches the page's requests after Post and reads only the id from the one that adds the post to your feed.
+- These are LinkedIn's page internals, so a LinkedIn update can break them.
+
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text from the feed, and `comment` commented on it from the post's page. LinkedIn's own success toast linked to the same post URL `post` returned, and the reloaded post page showed the video, the text and the comment under the id `comment` returned. A second, text-only post had a line break, a blank line and two blank lines in a row, and a comment on it had a line break and a blank line; LinkedIn stored and showed both exactly as written. Both posts were then deleted, with their comments. Attaching an image was dry-run up to the Post button but not published.
+
 ## Adding a script
 
 - One file per site, with the `// ==UserAdapter==` header and an `@domain`.
