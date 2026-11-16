@@ -109,6 +109,7 @@ Things to know:
 - TikTok's own scripts in the page sign every call, so the adapter never reads tokens or cookies. The temporary upload credentials TikTok hands `post` are used only inside the page: never returned, logged or written to disk.
 - The upload region comes from the page, the way Studio's uploader reads it. Only the Singapore region has been tried.
 - TikTok has shown a video's comment count as 0 while the video had comments, so check with `comments`, not the count.
+- TikTok drops a caption's line breaks: a caption posted with them reads back as one paragraph.
 - These are TikTok's undocumented endpoints, so a TikTok update can break them.
 
 Status (2026-11-16): `post` published an 11 MB video (three upload slices) as Only you on a Singapore-region account. The video page showed both hashtags as links and a cover, and the test post was then deleted. `comment` posted a comment on a public video (TikTok returned its id), which was then deleted. A signed API call was also checked with the tab in the background. `recent` and `comments` were checked against the account's own videos: `comments` found both comments on a video whose count TikTok showed as 0.
@@ -232,7 +233,7 @@ Uploads videos and comments on your videos as you on YouTube, through YouTube St
 | `post` | Uploads the video in `#yt-video`, publishes it and returns its `id` and `url`. Args: `title` (required), `description`, `visibility` (`public`, `unlisted` or `private`; default `public`). |
 | `comment` | Posts a comment as you on a video on your own channel and returns its id. Args: `video` (the video's URL, such as `url` from `post`, or its id), `text`. |
 | `recent` | Your latest uploads, newest first: id, url, date, visibility, title, description. Args: `limit` (default 10, at most 50). |
-| `comments` | The newest published comments on one of your videos, with `mine` marking yours. Args: `video`. |
+| `comments` | The newest published comments on one of your videos, with `mine` marking yours. A comment just posted can take about 20 seconds to show. Args: `video`. |
 
 ```bash
 chrome-devtools --target <name> navigate https://studio.youtube.com/

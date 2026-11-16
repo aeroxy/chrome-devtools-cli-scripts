@@ -13,7 +13,7 @@
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js recent [-a limit=10]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/youtube.js comments -a video=<url>
 //
-// recent and comments only read. recent lists your latest uploads, newest first, with id, url, date, visibility, title and description, as Studio's Content page does. comments lists the newest published comments on one of your videos, marking yours with mine.
+// recent and comments only read. recent lists your latest uploads, newest first, with id, url, date, visibility, title and description, as Studio's Content page does. comments lists the newest published comments on one of your videos, marking yours with mine. A comment just posted can take about 20 seconds to show there.
 //
 // prepare adds a hidden file input for fill to put the video in.
 //
