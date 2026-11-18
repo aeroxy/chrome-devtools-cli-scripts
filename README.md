@@ -116,12 +116,12 @@ Status (2026-11-16): `post` published an 11 MB video (three upload slices) as On
 
 ## rednote.js
 
-Posts video notes and comments as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
+Posts video notes and image notes, and comments, as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
-| `prepare` | Adds a hidden file input, `#rednote-video`, for `fill` to put the video in. The publish page's own input would start the page's uploader instead. |
-| `post` | Uploads the video in `#rednote-video`, publishes it as a video note and returns its `id` and a `url` that opens it. Args: `title` (at most 20 characters), `description`, `hashtags` (RedNote topic names, separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs at least one of `title`, `description` and `hashtags`. |
+| `prepare` | Adds a hidden file input, `#rednote-media`, for `fill` to put one video or image in. The publish page's own input would start the page's uploader instead. |
+| `post` | Uploads the video or image in `#rednote-media`, publishes it as a video note (a video) or an image note (an image) and returns its `id`, a `url` that opens it and its `kind`. Args: `title` (at most 20 characters), `description`, `hashtags` (RedNote topic names, separated by spaces or commas, `#` optional), `visibility` (`everyone`, `friends` or `only_me`; default `everyone`). It needs at least one of `title`, `description` and `hashtags`. |
 | `comment` | Posts a comment as you and returns its id. Args: `note` (the note's URL, such as `url` from `post`, or its 24-character id), `text`. |
 | `recent` | Your latest notes, newest first, up to 10: id, a `url` that opens it, date, title. Args: `limit` (default 10). |
 | `comments` | The first comments on a note, with `mine` marking yours. Args: `note` (a URL from `post` or `recent`). |
@@ -130,7 +130,7 @@ Posts video notes and comments as you on RedNote (Xiaohongshu, 小红书), throu
 chrome-devtools --target <name> select-page
 chrome-devtools --target <name> navigate https://creator.xiaohongshu.com/publish/publish
 chrome-devtools --target <name> adapter rednote.js prepare
-chrome-devtools --target <name> fill '#rednote-video' clip.mp4
+chrome-devtools --target <name> fill '#rednote-media' clip.mp4
 chrome-devtools --target <name> adapter rednote.js post -a title="..." -a description="..." -a hashtags="AI工具, 大模型"
 chrome-devtools --target <name> navigate https://www.xiaohongshu.com/explore
 chrome-devtools --target <name> adapter rednote.js comment -a note=<url from post> -a text="..."
@@ -141,18 +141,19 @@ Things to know:
 - Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
 - `prepare` and `post` run on the publish page, whose own video tools `post` uses to read the video's metadata and take its first frame for the cover. Other creator pages don't start those tools. `comment` runs on `www.xiaohongshu.com`.
 - Let the publish page load with its tab showing (`select-page`, with Chrome not hidden behind other windows). Twice, a publish page that loaded in a hidden tab froze until the tab was shown, and every chrome-devtools command waited behind it. Once it has loaded, `post` works with the tab in the background.
-- The note's text is `description`, a blank line, then the hashtags. RedNote links a hashtag only to an existing topic, so `post` looks each one up first and stops before uploading anything if one isn't a topic, naming the closest topics it found. Names match exactly first, then ignoring case; `AIAgent` and `aiagent` are separate topics. A `#` typed inside `description` stays plain text.
+- The note's text is `description`, a blank line, then the hashtags. RedNote links a hashtag only to an existing topic, so `post` looks each one up first and stops before uploading anything if one isn't a topic, naming the closest topics it found. Names match exactly first, then ignoring case; `AIAgent` and `aiagent` are separate topics. A `#tag` inside `description` is a topic too, linked where it stands: it needs a space before it, and one after it in Chinese text, and it's looked up like the others, so a `#word` that is no topic stops the post before anything is uploaded, and one that is a topic (a colour like `#fff` is) gets linked. Write a word you don't mean as a tag without the `#`. A tag of only digits (`#1`) is left as text.
 - `title` is counted the way the publish page counts it: a Chinese character as one, two ASCII characters as one.
 - `friends` means mutual follows only. Comments and copying the note's text (允许正文复制) are allowed, the publish page's defaults for a new note.
 - Some topics carry a campaign (活动). The publish page joins it when you pick such a topic from its list; `post` doesn't.
-- `post` empties `#rednote-video` once the note is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- An image note takes one JPEG, PNG or WebP image. `post` uploads it in one request, as the cover frame goes up, and lists it the way the publish page does for an image note. It runs on the same publish page as a video note, with the same title, text, topics and visibility.
+- `post` empties `#rednote-media` once the note is published, so running it again can't publish the same media twice. A page reload removes the input: run `prepare` and `fill` again.
 - The `url` from `post` carries the `xsec_token` RedNote's note pages ask for, from the note manager's list. The share link RedNote returns on publishing has none, and for the test note it showed "page isn't available".
 - `recent` runs on the creator site, like `post`, and `comments` on `www.xiaohongshu.com`, like `comment`. The note manager `recent` reads gives titles, not the notes' text. `comments` needs the `xsec_token` in a link from `post` or `recent`.
 - `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the video, the title, the text and the visibility with the user before running them.
 - The page's own HTTP client signs every call, so the adapter never reads tokens or cookies. The upload permits RedNote hands `post` are used only inside the page: never returned, logged or written to disk.
 - It relies on RedNote's undocumented endpoints and on page internals (the publish page's `window._publisher` and the page's HTTP client module), so a RedNote update can break it.
 
-Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried. `recent` and `comments` were checked against the account's own notes, and `comments` marked both of a note's link comments as yours.
+Status (2026-11-16): `post` published an 11 MB, 8-second video as only me, with its tab in the background. The note page showed the title, the blank line and the hashtag as a link, the note manager showed the video's first frame as the cover, and the note was then deleted. `comment` posted a comment on that note, which showed on the note page and was then deleted. `everyone` and `friends` visibility haven't been tried. `recent` and `comments` were checked against the account's own notes, and `comments` marked both of a note's link comments as yours. Topics inside `description` were checked up to the publish call: the real topic lookups, and the text and topic list RedNote would receive. No note with an inline topic has been published yet, so how RedNote shows one is unconfirmed. An image note was published (2026-11-18) with its topics in the closing line: the note page showed the image, the title, the text, four topics as links and the link comment. Topics inside `description` are still unconfirmed on the live site, since that note used the closing line.
 
 ## x.js
 
@@ -186,16 +187,16 @@ Things to know:
 - It borrows X's own API client from the page, which adds the bearer token, the CSRF token and the transaction id, so the adapter never reads tokens or cookies. The query id and feature list for posting come from X's code in the page, so they follow X's updates.
 - These are X's internal endpoints and page internals, so an X update can break them.
 
-Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image upload was also tried, without posting it. `recent` and `replies` were checked against the account's own posts: `replies` found both link replies under a post, with their links expanded from t.co.
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text, and `reply` replied to it. Read back from X, the post had the video (720×1280) and the reply was attached to it; both were then deleted. An image post, a JPEG screenshot with text, was also published (2026-11-18): the post showed the image, and its hashtags, an inline one included, were links. `recent` and `replies` were checked against the account's own posts: `replies` found both link replies under a post, with their links expanded from t.co.
 
 ## instagram.js
 
-Posts a video as a Reel and comments as you on Instagram, through Instagram's own web code, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
+Posts a video as a Reel or an image as a photo, and comments, as you on Instagram, through Instagram's own web code, in a signed-in tab. `prepare` only adds a file input to the page, and `recent` and `comments` only read; `post` and `comment` publish.
 
 | Function | What it does |
 | --- | --- |
-| `prepare` | Adds a hidden file input, `#ig-video`, for `fill` to put the video in. |
-| `post` | Uploads the video in `#ig-video`, publishes it as a Reel and returns its `id` and `url`. Args: `caption`. |
+| `prepare` | Adds a hidden file input, `#ig-media`, for `fill` to put one video or image in. |
+| `post` | Uploads the video or image in `#ig-media`, publishes it as a Reel (a video) or a feed photo (an image) and returns its `id` and `url`. Args: `caption`. |
 | `comment` | Posts a comment as you and returns its id. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
 | `recent` | Your latest posts, newest first: id, url, date, caption. Args: `limit` (default 10, at most 50). |
 | `comments` | The first comments on a post, with `mine` marking yours. Args: `post` (its URL). |
@@ -203,7 +204,7 @@ Posts a video as a Reel and comments as you on Instagram, through Instagram's ow
 ```bash
 chrome-devtools --target <name> navigate https://www.instagram.com/
 chrome-devtools --target <name> adapter instagram.js prepare
-chrome-devtools --target <name> fill '#ig-video' clip.mp4
+chrome-devtools --target <name> fill '#ig-media' clip.mp4
 chrome-devtools --target <name> adapter instagram.js post -a caption="..."
 chrome-devtools --target <name> adapter instagram.js comment -a post=<url from post> -a text="..."
 ```
@@ -212,16 +213,17 @@ Things to know:
 
 - Putting the video in the input needs a chrome-devtools whose `fill` takes a local file path when the selector matches a file input.
 - Run it on any signed-in `www.instagram.com` page. `post` loads the New post dialog's code itself, without opening the dialog.
-- `post` handles one video, published as a Reel. Photos and carousels aren't supported. It reads the video's duration and size with Instagram's own container parser, so it takes MP4 and MOV files.
+- `post` handles one video, published as a Reel, or one image, published as a feed photo. Carousels aren't supported. It reads a video's duration and size with Instagram's own container parser, so it takes MP4 and MOV files.
+- A photo must be from 4:5 to 1.91:1, the shapes Instagram's feed takes, and `post` refuses any other so you can crop it first. Instagram's photo uploader takes JPEG, so a PNG is redrawn as one first.
 - Hashtags and @mentions in `caption` work as typed. Comments and like counts stay on, as Instagram sets them for a new post.
-- Instagram picks the cover frame: `post` uses the composer's mode where Instagram takes it, instead of uploading a frame from the page.
-- `post` empties `#ig-video` once the Reel is published, so running it again can't publish the same video twice. A page reload removes the input: run `prepare` and `fill` again.
+- Instagram picks a Reel's cover frame: `post` uses the composer's mode where Instagram takes it, instead of uploading a frame from the page.
+- `post` empties `#ig-media` once the post is published, so running it again can't publish the same media twice. A page reload removes the input: run `prepare` and `fill` again.
 - `comment` takes the post's URL and works out the media id from the code in it.
 - `post` and `comment` publish immediately, publicly unless the account is private, and can't be undone from here. Agents: confirm the video, the caption and the text with the user before running them.
 - It calls Instagram's own modules through the page's `require`, and those add the CSRF and session tokens, so the adapter never reads tokens or cookies.
 - These are Instagram's internal endpoints and page internals, so an Instagram update can break them.
 
-Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried. `recent` and `comments` were checked against the account's own Reels.
+Status (2026-11-16): from a freshly loaded home page, `post` published an 8-second, 11 MB video as a public Reel and `comment` commented on it. The Reel page showed the video, the caption and one comment, and the Reel was then deleted. A background tab hasn't been tried. `recent` and `comments` were checked against the account's own Reels. Photos: a PNG copy of a screenshot, redrawn as JPEG, was checked through Instagram's photo uploader (the server answered `ok`) without posting it, and the JPEG screenshot itself was published as a feed photo (2026-11-18) with a comment. The post page showed the image, the caption with its inline hashtag as a link, and the comment.
 
 ## youtube.js
 
@@ -259,11 +261,12 @@ Status (2026-11-16): `post` uploaded an 8-second, 11 MB video and published it a
 
 ## reddit.js
 
-Posts text and link posts and comments as you on Reddit, through the endpoints Reddit's own web app uses, in a signed-in tab. `post` and `comment` publish; `rules`, `recent` and `comments` only read.
+Posts text, link and image posts, and comments, as you on Reddit, through the endpoints Reddit's own web app uses, in a signed-in tab. `post` and `comment` publish; `rules`, `recent` and `comments` only read.
 
 | Function | What it does |
 | --- | --- |
-| `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post), `text` (the body, in Markdown), `flair` (a flair id from `rules`). |
+| `prepare` | On the submit page's Images tab, adds a hidden file input, `#reddit-media`, for `fill` to put one image in. A text or link post doesn't need it. |
+| `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post; an image in `#reddit-media` makes it an image post instead), `text` (the body, in Markdown), `flair` (a flair id from `rules`). |
 | `comment` | Posts a comment, in Markdown, on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
 | `rules` | What a subreddit asks of a post: the post types it takes (`postTypes`: `any`, `link` or `self`), the requirements it has set (flair, title and body rules, allowed domains), its rules, and its post flairs with their ids. Args: `subreddit`. |
 | `recent` | Your latest posts, newest first: id, url, date, subreddit, title, link, text. Args: `limit` (default 10, at most 50). |
@@ -273,6 +276,11 @@ Posts text and link posts and comments as you on Reddit, through the endpoints R
 chrome-devtools --target <name> adapter reddit.js rules -a subreddit=<subreddit>
 chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit
 chrome-devtools --target <name> adapter reddit.js post -a title="..." -a url="https://..."
+# or an image post, from the Images tab
+chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit/?type=IMAGE
+chrome-devtools --target <name> adapter reddit.js prepare
+chrome-devtools --target <name> fill '#reddit-media' screenshot.png
+chrome-devtools --target <name> adapter reddit.js post -a title="..."
 chrome-devtools --target <name> navigate <url from post>
 chrome-devtools --target <name> adapter reddit.js comment -a post=<url from post> -a text="..."
 ```
@@ -281,14 +289,16 @@ Things to know:
 
 - Run `post` on the subreddit's submit page and `comment` on the post's page. Reddit gets a Google reCAPTCHA Enterprise token when you press each form's button, and these functions ask that form's own code for one.
 - `comment` checks that the tab shows the post you named, so it can't comment on the wrong one.
-- `text` is Markdown in both functions, and a link post can have a body too.
-- Run `rules` before posting: a subreddit that requires a flair refuses a post without one, many require a body, and some bar words from titles. `post` sets no NSFW or spoiler tag.
+- `text` is Markdown in both functions, and a link or image post can have a body too.
+- Run `rules` before posting: a subreddit that requires a flair refuses a post without one, many require a body, some bar words from titles, and one whose `postTypes` is `link` or `self` takes no image post. `post` sets no NSFW or spoiler tag.
+- An image post runs on the submit page's Images tab (`/submit/?type=IMAGE`) and takes one JPEG, PNG, WebP or GIF. Reddit posts an image or a link, not both, so `post` refuses `url` together with an image: put the link in a comment. The image goes through the submit page's own Images field, which uploads it as it does a picked file, and `post` empties the input afterwards.
+- A subreddit's AutoModerator can hold a new post for its moderators, and a subreddit you haven't joined is likelier to. The post still shows to you, so `post` and `recent` return `removed`: null for a post that is up, or the reason Reddit hides it, such as `automod_filtered`. Others can't see a held post until a moderator approves it.
 - Let the page load with its tab showing (`select-page`). Once, a Reddit page that loaded in a background tab froze until the tab was shown, and every chrome-devtools command waited behind it.
-- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the subreddit, the title, the link and the text with the user before running them.
+- `post` and `comment` publish immediately and can't be undone from here. Agents: confirm the subreddit, the title, the link or image and the text with the user before running them.
 - Every request carries Reddit's CSRF token. Reddit's own scripts read it from the `csrf_token` cookie, and the adapter does the same inside the page, never returning or logging it. It touches no other cookie.
 - These are Reddit's internal endpoints and page internals, so a Reddit update can break them.
 
-Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. A link post with a `flair` id from `rules` went up with that flair in a subreddit that requires one.
+Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. A link post with a `flair` id from `rules` went up with that flair in a subreddit that requires one. An image post, a JPEG screenshot with a body and a flair, was published (2026-11-18) in a subreddit that requires a flair, and showed its image, flair and body. That subreddit's AutoModerator held it for its moderators (`removed` was `automod_filtered`), so check `removed` after posting.
 
 ## linkedin.js
 
@@ -332,7 +342,7 @@ Things to know:
 - Both put the text in through LinkedIn's own editors and press LinkedIn's own buttons, so LinkedIn's code sends every request with its tokens, and the adapter never reads tokens or cookies. To learn the new post's id, `post` watches the page's requests after Post and reads only the id from the one that adds the post to your feed.
 - These are LinkedIn's page internals, so a LinkedIn update can break them.
 
-Status (2026-11-16): `post` published an 8-second, 11 MB video with text from the feed, and `comment` commented on it from the post's page. LinkedIn's own success toast linked to the same post URL `post` returned, and the reloaded post page showed the video, the text and the comment under the id `comment` returned. A second, text-only post had a line break, a blank line and two blank lines in a row, and a comment on it had a line break and a blank line; LinkedIn stored and showed both exactly as written. Both posts were then deleted, with their comments. Attaching an image was dry-run up to the Post button but not published. `recent` and `comments` were checked against the account's own posts, and the dates `recent` reads from post ids matched when the posts were made.
+Status (2026-11-16): `post` published an 8-second, 11 MB video with text from the feed, and `comment` commented on it from the post's page. LinkedIn's own success toast linked to the same post URL `post` returned, and the reloaded post page showed the video, the text and the comment under the id `comment` returned. A second, text-only post had a line break, a blank line and two blank lines in a row, and a comment on it had a line break and a blank line; LinkedIn stored and showed both exactly as written. Both posts were then deleted, with their comments. An image post, a JPEG screenshot, was also published (2026-11-18), with a comment: the post showed the image, and its hashtags, an inline one included, were links. `recent` and `comments` were checked against the account's own posts, and the dates `recent` reads from post ids matched when the posts were made.
 
 ## Adding a script
 

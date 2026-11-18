@@ -3,27 +3,31 @@
 // @domain       www.reddit.com
 // ==/UserAdapter==
 
-// Post a text or link post to a subreddit and comment on posts as you, through the endpoints Reddit's own web app uses, in a signed-in tab.
+// Post a text, link or image post to a subreddit and comment on posts as you, through the endpoints Reddit's own web app uses, in a signed-in tab.
 //
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js rules -a subreddit=<name>
 //   chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js post -a title="..." [-a url="https://..."] [-a text="..."] [-a flair=<id from rules>]
+//   chrome-devtools --target <name> navigate https://www.reddit.com/r/<subreddit>/submit/?type=IMAGE
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js prepare
+//   chrome-devtools --target <name> fill '#reddit-media' screenshot.png
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js post -a title="..." [-a text="..."] [-a flair=<id from rules>]
 //   chrome-devtools --target <name> navigate <url from post>
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comment -a post=<url from post> -a text="..."
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js recent [-a limit=10]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comments -a post=<url>
 //
-// rules, recent and comments only read, on any www.reddit.com page. rules shows what a subreddit asks of a post: the post types it takes (postTypes: any, link or self), the posting requirements it has set (requirements, such as is_flair_required, body_restriction_policy, title_blacklisted_strings or domain_whitelist), its rules and its post flairs with their ids. recent lists your latest posts, newest first, with id, url, date, subreddit, title, link and text. comments lists the newest top-level comments on a post, marking yours with mine; they come back in Markdown, so a pasted link can read [url](url).
+// rules, recent and comments only read, on any www.reddit.com page. rules shows what a subreddit asks of a post: the post types it takes (postTypes: any, link or self), the posting requirements it has set (requirements, such as is_flair_required, body_restriction_policy, title_blacklisted_strings or domain_whitelist), its rules and its post flairs with their ids. recent lists your latest posts, newest first, with id, url, date, subreddit, title, link, text and removed (null for a post that is up, or Reddit's reason, such as automod_filtered, when a moderator or the subreddit's AutoModerator has removed or held it). comments lists the newest top-level comments on a post, marking yours with mine; they come back in Markdown, so a pasted link can read [url](url).
 //
-// post publishes to the subreddit whose submit page the tab is on and returns the post's id and url. With url it's a link post; without, a text post. text is the body, in Markdown, and is optional for both, unless the subreddit requires one. flair is the id of one of the subreddit's flairs from rules; post sends it with the flair's text, as the submit form does. A subreddit that requires a flair refuses a post without one.
+// post publishes to the subreddit whose submit page the tab is on and returns the post's id and url. With url it's a link post, with an image in #reddit-media it's an image post, and with neither it's a text post. text is the body, in Markdown, and is optional for all three, unless the subreddit requires one. An image post runs on the submit page's Images tab (/submit/?type=IMAGE), where prepare adds the hidden file input for fill to put one JPEG, PNG, WebP or GIF image in; post empties the input afterwards, so posting again needs a new fill. Reddit posts an image or a link, not both, so a link goes in a comment. flair is the id of one of the subreddit's flairs from rules; post sends it with the flair's text, as the submit form does. A subreddit that requires a flair refuses a post without one. post also returns removed, read a few seconds after posting: null for a post that is up, or the reason Reddit hides it when the subreddit's AutoModerator holds it for moderators, which the author's own page doesn't show.
 //
 // comment posts a comment, in Markdown, on the post the tab is showing and returns its id and url. Pass the post's URL as post too: comment checks it against the page so it can't comment on the wrong post.
 //
 // Both run on a page where Reddit has its form for that action: the submit page for post, the post's own page for comment. Each form asks Google reCAPTCHA Enterprise for a token when you press its button, and these functions ask the same form's code for one rather than calling reCAPTCHA themselves. Let that page load with its tab showing: once, a Reddit page that loaded in a background tab froze until the tab was shown.
 //
-// How it works: post sends the CreatePost operation to /svc/shreddit/graphql and comment sends the comment form to /svc/shreddit/<post id>/create-comment, as the page does. Both carry Reddit's CSRF token, which Reddit's own scripts read from the csrf_token cookie for every request; this file does the same, inside the page, and never returns or logs it. These are Reddit's internal endpoints and page internals, so a Reddit update can break them. The requests follow what the web app sent in November 2026.
+// How it works: post sends the CreatePost operation to /svc/shreddit/graphql and comment sends the comment form to /svc/shreddit/<post id>/create-comment, as the page does. Both carry Reddit's CSRF token, which Reddit's own scripts read from the csrf_token cookie for every request; this file does the same, inside the page, and never returns or logs it. For an image, post hands the file to the submit page's own Images field (r-post-media-input), which uploads it to Reddit's media storage as it does for a picked file, and sends the address that field returns as the post's image. These are Reddit's internal endpoints and page internals, so a Reddit update can break them. The requests follow what the web app sent in November 2026.
 //
-// post and comment publish immediately as you and cannot be undone from here. Agents: confirm the subreddit, the title, the link and the text with the user first.
+// post and comment publish immediately as you and cannot be undone from here. Agents: confirm the subreddit, the title, the link or image and the text with the user first.
 
 // Reddit's CSRF token, which its own scripts read from this cookie for every request.
 function csrfToken() {
@@ -51,6 +55,9 @@ function postId(value) {
 
 const markdown = (value) => String(value ?? '').replace(/\r\n?/g, '\n').trim();
 
+const INPUT_ID = 'reddit-media';
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // How many items a list function returns: limit, from 1 to 50, 10 unless given.
 const limitFrom = (value) => Math.min(Math.max(Math.trunc(Number(value)) || 10, 1), 50);
 
@@ -72,6 +79,41 @@ async function flairTemplates(subreddit) {
   return (Array.isArray(list) ? list : []).map((f) => ({ id: f.id, text: unescapeHtml(f.text), editable: Boolean(f.text_editable), modOnly: Boolean(f.mod_only) }));
 }
 
+// The submit page's own Images field. It exists only on the page's Images tab.
+const imageField = () => {
+  const field = document.querySelector('r-post-media-input');
+  return field?.addFiles && field.allowImages ? field : null;
+};
+
+// Adds the hidden file input that fill puts one image in. It lasts until the page reloads.
+async function prepare() {
+  if (!imageField()) throw new Error('prepare runs on the submit page\'s Images tab. Open https://www.reddit.com/r/<subreddit>/submit/?type=IMAGE in this tab first.');
+  if (!document.getElementById(INPUT_ID)) {
+    document.body.append(Object.assign(document.createElement('input'), { type: 'file', id: INPUT_ID, accept: 'image/jpeg,image/png,image/webp,image/gif', hidden: true }));
+  }
+  return { selector: `#${INPUT_ID}` };
+}
+
+// Gives the image to the submit page's Images field, which uploads it as it does a picked file, and returns the address Reddit gives it.
+async function uploadImage(file) {
+  const field = imageField();
+  if (!field) throw new Error("An image post runs on the submit page's Images tab. Open https://www.reddit.com/r/<subreddit>/submit/?type=IMAGE in this tab first.");
+  field.clear();
+  await field.addFiles([file]);
+  // The field refuses a file it doesn't accept without adding it, so it must appear quickly; the upload itself can take longer.
+  for (let waited = 0; !field.mediaController?.media?.length; waited += 250) {
+    if (waited >= 10000) throw new Error(`Reddit's Images field did not take ${file.name}. It takes JPEG, PNG, WebP and GIF images within Reddit's size limits.`);
+    await sleep(250);
+  }
+  for (let waited = 0; field.mediaController.media[0].status !== 'success'; waited += 500) {
+    if (waited >= 90000) throw new Error(`Reddit's image upload had not finished after 90 seconds (status ${field.mediaController.media[0].status}). Nothing was posted.`);
+    await sleep(500);
+  }
+  const [uploaded] = JSON.parse(field.value);
+  if (!uploaded?.url) throw new Error('Reddit uploaded the image but gave no address for it. Nothing was posted.');
+  return uploaded.url;
+}
+
 async function post(ctx) {
   const button = document.querySelector('r-post-form-submit-button');
   const form = button?.form;
@@ -81,6 +123,9 @@ async function post(ctx) {
   if (!title) throw new Error('title is required');
   const url = String(ctx.args.url ?? '').trim();
   if (url && !/^https?:\/\/\S+$/i.test(url)) throw new Error('url must be a full http(s) link');
+  const file = document.getElementById(INPUT_ID)?.files?.[0];
+  if (file && !file.type.startsWith('image/')) throw new Error(`An image post takes an image; this file's type is ${file.type || 'unknown'}`);
+  if (file && url) throw new Error('Reddit posts an image or a link, not both. Put the link in a comment.');
   const text = markdown(ctx.args.text);
   // A flair id from rules. The submit form sends the flair's id with its text.
   const flairId = String(ctx.args.flair ?? '').trim();
@@ -90,6 +135,8 @@ async function post(ctx) {
     if (!flair) throw new Error(`r/${subreddit} has no flair with id ${flairId}. Run rules -a subreddit=${subreddit} for its flairs.`);
   }
 
+  // The upload comes first: the reCAPTCHA token below is good for a short while only.
+  const image = file ? await uploadImage(file) : null;
   const input = {
     isNsfw: false,
     isSpoiler: false,
@@ -99,6 +146,7 @@ async function post(ctx) {
     targetLanguage: '',
     recaptchaToken: await recaptchaToken(button, form),
     ...(url ? { link: { url } } : {}),
+    ...(image ? { image: { url: image } } : {}),
     subredditName: subreddit,
     correlationId: crypto.randomUUID(),
     ...(flair ? { flair: { id: flair.id, text: flair.text } } : {}),
@@ -115,7 +163,16 @@ async function post(ctx) {
     const problems = [...(json?.errors ?? []), ...(result?.errors ?? []), ...(result?.fieldErrors ?? [])].map((e) => e.message ?? JSON.stringify(e));
     throw new Error(`Reddit did not publish the post: ${problems.join('; ') || `HTTP ${res.status}`}`);
   }
-  return { id: result.post.id, url: `https://www.reddit.com${result.post.permalink}`, subreddit, title, type: url ? 'link' : 'text' };
+  if (file) {
+    imageField()?.clear();
+    document.getElementById(INPUT_ID).value = '';
+  }
+  // A subreddit's AutoModerator can hold a new post for its moderators within seconds. The author's page doesn't show it, but the post's data says why it's hidden. A failed lookup leaves removed null: the post is already up, so post must not fail.
+  await sleep(4000);
+  const removed = await getJson(`/comments/${String(result.post.id).replace(/^t3_/, '')}.json?raw_json=1&limit=1`)
+    .then((json) => json[0]?.data?.children?.[0]?.data?.removed_by_category ?? null)
+    .catch(() => null);
+  return { id: result.post.id, url: `https://www.reddit.com${result.post.permalink}`, subreddit, title, type: image ? 'image' : url ? 'link' : 'text', removed };
 }
 
 // What a subreddit asks of a post: the post types it takes, its posting requirements (flair, title and body rules, allowed domains), its rules and its post flairs. post takes a flair's id.
@@ -153,6 +210,7 @@ async function recent(ctx) {
     title: p.title,
     link: p.is_self ? null : p.url,
     text: p.selftext,
+    removed: p.removed_by_category ?? null,
   }));
 }
 

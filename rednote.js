@@ -1,15 +1,15 @@
 // ==UserAdapter==
-// @name         RedNote video notes and comments
+// @name         RedNote video notes, image notes and comments
 // @domain       creator.xiaohongshu.com
 // @domain       www.xiaohongshu.com
 // ==/UserAdapter==
 
-// Post a video note and comment on notes as you on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab.
+// Post a video note or an image note, and comment on notes as you, on RedNote (Xiaohongshu, 小红书), through the web API its own pages use, in a signed-in tab.
 //
 //   chrome-devtools --target <name> select-page
 //   chrome-devtools --target <name> navigate https://creator.xiaohongshu.com/publish/publish
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js prepare
-//   chrome-devtools --target <name> fill '#rednote-video' clip.mp4
+//   chrome-devtools --target <name> fill '#rednote-media' clip.mp4
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js post -a title="..." -a description="..." [-a hashtags="AI工具, 大模型"] [-a visibility=everyone|friends|only_me]
 //   chrome-devtools --target <name> navigate https://www.xiaohongshu.com/explore
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/rednote.js comment -a note=<url from post> -a text="..."
@@ -20,19 +20,19 @@
 //
 // recent and comments only read. recent runs on the creator site and lists your latest notes, newest first, up to 10 (the note manager's first page), with id, a url that opens the note, date and title; the note manager gives titles, not the notes' text. comments runs on www.xiaohongshu.com and lists the first comments on a note, marking yours with mine. RedNote wants the xsec_token in the note's link for that, so pass a url from post or recent.
 //
-// prepare adds a hidden file input for fill to put the video in. The publish page's own input would start the page's uploader instead.
+// prepare adds a hidden file input for fill to put one video or image in. The publish page's own input would start the page's uploader instead.
 //
-// post uploads that video, publishes it as a video note, returns its id and a url that opens it, and empties the input, so posting again needs a new fill. title is optional and at most 20 characters, counted as the publish page counts them: a Chinese character as one, two ASCII characters as one. The note's text is description, a blank line, then the hashtags (separated by spaces or commas, with or without #). A hashtag links only to an existing RedNote topic, so post looks each one up first and stops before uploading anything if one isn't a topic, naming the closest topics. Names match exactly first, then ignoring case. A # typed inside description stays plain text. visibility is everyone unless given; friends means mutual follows only. Comments and copying the note's text are allowed, the publish page's defaults. The cover is the video's first frame.
+// post uploads that file, publishes it as a video note for a video and as an image note for an image (one JPEG, PNG or WebP), returns its id and a url that opens it, and empties the input, so posting again needs a new fill. title is optional and at most 20 characters, counted as the publish page counts them: a Chinese character as one, two ASCII characters as one. The note's text is description, a blank line, then the hashtags (separated by spaces or commas, with or without #). A hashtag links only to an existing RedNote topic, so post looks each one up first and stops before uploading anything if one isn't a topic, naming the closest topics. Names match exactly first, then ignoring case. A #tag inside description is a topic too, linked where it stands: it needs a space before it, and one after it in Chinese text, and it's looked up like the others. visibility is everyone unless given; friends means mutual follows only. Comments and copying the note's text are allowed, the publish page's defaults. The cover of a video note is the video's first frame.
 //
 // comment posts a comment on a note and returns its id. Pass the note's URL or its 24-character id.
 //
-// prepare and post run on the publish page, whose video tools post uses; comment runs on www.xiaohongshu.com. Let the publish page load with its tab showing: twice, one that loaded in a hidden tab froze until shown, holding up every chrome-devtools command. Once it has loaded, post works with the tab in the background.
+// prepare and post run on the publish page, whose video tools post uses for a video (an image note runs there too, so one page serves both); comment runs on www.xiaohongshu.com. Let the publish page load with its tab showing: twice, one that loaded in a hidden tab froze until shown, holding up every chrome-devtools command. Once it has loaded, post works with the tab in the background.
 //
-// How it works: the page's own HTTP client signs every call (X-s, X-t, X-S-Common, and x-rap-param on the calls RedNote checks most), so this file never computes those or touches cookies. post reads the video's metadata and first frame with the publish page's own tools, uploads the video and the frame to RedNote's storage with the one-file upload permits RedNote hands out, waits until RedNote has started processing the video, and publishes with /web_api/sns/v2/note. These are RedNote's undocumented endpoints and page internals, so a RedNote update can break them. The requests follow what the publish page sent in November 2026.
+// How it works: the page's own HTTP client signs every call (X-s, X-t, X-S-Common, and x-rap-param on the calls RedNote checks most), so this file never computes those or touches cookies. post reads the video's metadata and first frame with the publish page's own tools, uploads the video and the frame to RedNote's storage with the one-file upload permits RedNote hands out, waits until RedNote has started processing the video, and publishes with /web_api/sns/v2/note. An image goes up in one PUT the way the cover frame does, and is listed in the request's image_info as the publish page builds it for an image note, with the note's type normal. These are RedNote's undocumented endpoints and page internals, so a RedNote update can break them. The requests follow what the publish page sent in November 2026.
 //
-// post and comment publish immediately as you and cannot be undone from here. Agents: confirm the video, the title, the text and the visibility with the user first.
+// post and comment publish immediately as you and cannot be undone from here. Agents: confirm the video or image, the title, the text and the visibility with the user first.
 
-const INPUT_ID = 'rednote-video';
+const INPUT_ID = 'rednote-media';
 const CREATOR = 'https://creator.xiaohongshu.com';
 const EDITH = 'https://edith.xiaohongshu.com';
 // The publish page's codes for who can see a note. 2 and 3 are its "hide from" and "only show to" lists, which need user ids.
@@ -189,6 +189,11 @@ function hashtagNames(value) {
   return [...new Set(String(value ?? '').split(/[\s,，、#]+/).filter(Boolean))];
 }
 
+// A #tag written inside the description. It needs whitespace before it and ends at the first character that isn't a letter, digit or underscore, so Chinese text needs a space after it too. A tag of only digits (#1) isn't one.
+const INLINE_TAG = /(^|\s)#([\p{L}\p{N}_]+)/gu;
+const isTagName = (name) => !/^\d+$/.test(name);
+const inlineTagNames = (description) => [...new Set([...description.matchAll(INLINE_TAG)].map((m) => m[2]).filter(isTagName))];
+
 // Looks each hashtag up with the publish page's topic search and takes the topic with exactly that name, or failing that the same name in another case. Case can matter: AIAgent and aiagent are separate topics.
 async function findTopics(names) {
   const topics = [];
@@ -200,7 +205,7 @@ async function findTopics(names) {
     if (!topic) missing.push(`${name} (closest: ${found.slice(0, 3).map((t) => t.name).join(', ') || 'none'})`);
     else if (!topics.some((t) => t.id === topic.id)) topics.push({ id: topic.id, name: topic.name, link: topic.link, type: 'topic' });
   }
-  if (missing.length) throw new Error(`Not RedNote topics, so nothing was uploaded: ${missing.join('; ')}. Use existing topic names.`);
+  if (missing.length) throw new Error(`Not RedNote topics, so nothing was uploaded: ${missing.join('; ')}. Use existing topic names. A #word inside the description counts as one too: write it without the # if it isn't meant as a topic.`);
   return topics;
 }
 
@@ -232,29 +237,35 @@ function noteId(value) {
   return id.toLowerCase();
 }
 
-// Adds the hidden file input that fill puts the video in. It lasts until the page reloads.
+// Adds the hidden file input that fill puts the video or image in. It lasts until the page reloads.
 async function prepare() {
   videoTools();
   if (!document.getElementById(INPUT_ID)) {
-    document.body.append(Object.assign(document.createElement('input'), { type: 'file', id: INPUT_ID, accept: 'video/*', hidden: true }));
+    document.body.append(Object.assign(document.createElement('input'), { type: 'file', id: INPUT_ID, accept: 'video/*,image/*', hidden: true }));
   }
   return { selector: `#${INPUT_ID}` };
 }
 
-async function post(ctx) {
-  const media = videoTools();
-  const input = document.getElementById(INPUT_ID);
-  const file = input?.files?.[0];
-  if (!file) throw new Error(`No video to post. In this tab, run prepare, then fill '#${INPUT_ID}' <video>.`);
-  const title = String(ctx.args.title ?? '').trim();
-  if (titleLength(title) > 20) throw new Error(`title is ${titleLength(title)} characters as RedNote counts them (two ASCII characters as one); it allows 20`);
-  const visibility = String(ctx.args.visibility ?? 'everyone');
-  if (!Object.hasOwn(VISIBILITY, visibility)) throw new Error('visibility must be everyone, friends or only_me');
-  const description = noteText(ctx.args.description);
-  const names = hashtagNames(ctx.args.hashtags);
-  if (!title && !description && !names.length) throw new Error('Pass a title, a description or hashtags');
+// The part of the publish request both kinds of note share: the text, topics, audience and the note's type, video for a video note and normal for an image note.
+function commonInfo(type, { title, desc, topics, visibility }) {
+  return {
+    type,
+    note_id: '',
+    source: JSON.stringify({ type: 'web', ids: '', extraInfo: JSON.stringify({ subType: 'official', systemId: 'web' }) }),
+    title,
+    desc,
+    ats: [],
+    hash_tag: topics,
+    business_binds: JSON.stringify({ version: 1, noteId: 0, bizType: 0, noteOrderBind: {}, notePostTiming: {}, noteCollectionBind: { id: '' }, noteSketchCollectionBind: { id: '' }, noteCopyBind: { copyable: true }, interactionPermissionBind: { commentPermission: 0 }, optionRelationList: [] }),
+    privacy_info: { op_type: 1, type: VISIBILITY[visibility], user_ids: [] },
+    goods_info: {},
+    biz_relations: [],
+    capa_trace_info: { contextJson: JSON.stringify({ recommend_title: { recommend_title_id: '', is_use: 3, used_index: -1 }, recommendTitle: [], recommend_topics: { used: topics.map((t) => ({ id: t.id, name: t.name, topic_source: 'search_offical' })) } }) },
+  };
+}
 
-  const topics = await findTopics(names);
+// Uploads the video and its first frame, and returns the video part of the publish request.
+async function videoInfo(media, file) {
   const { video, audio, width, height, duration } = await metadata(media, file);
   // The publish page's ffmpeg names its working folders after the name given here and doesn't overwrite, so a fresh name keeps a repeat post from reading back an older frame. It refuses ("please bootstrap first") until the page has finished starting it.
   const frame = await media.getFirstFrame(`rednote-${Date.now()}`, file).catch((error) => {
@@ -264,53 +275,91 @@ async function post(ctx) {
   const cover = await uploadCover(frame.file);
   const { fileId, videoId } = await uploadVideo(file);
   await processed(videoId);
+  return {
+    fileid: fileId,
+    file_id: fileId,
+    format_width: width,
+    format_height: height,
+    video_preview_type: width / height <= 0.6 ? 'full_vertical_screen' : '',
+    composite_metadata: { video, audio },
+    timelines: [],
+    cover: {
+      fileid: cover.id,
+      file_id: cover.id,
+      width: cover.width,
+      height: cover.height,
+      stickers: { neptune: [], version: 2 },
+      fonts: [],
+      frame: { ts: 0, is_upload: false, is_user_select: false },
+      extra_info_json: JSON.stringify({ cover_recommend: { isUseRecommend: false, isAiCover: false } }),
+    },
+    chapters: [],
+    summary: '',
+    chapter_sync_text: false,
+    segments: { count: 1, need_slice: false, items: [{ mute: 0, speed: 1, start: 0, duration, transcoded: 0, media_source: 1, original_metadata: { video, audio } }] },
+    entrance: 'web',
+    pk_cover_biz_relations: [],
+  };
+}
 
-  const desc = [description, topics.map((t) => `#${t.name}[话题]#`).join(' ')].filter(Boolean).join('\n\t\n');
-  const res = await call('POST', `${EDITH}/web_api/sns/v2/note`, {
-    common: {
-      type: 'video',
-      note_id: '',
-      source: JSON.stringify({ type: 'web', ids: '', extraInfo: JSON.stringify({ subType: 'official', systemId: 'web' }) }),
-      title,
-      desc,
-      ats: [],
-      hash_tag: topics,
-      business_binds: JSON.stringify({ version: 1, noteId: 0, bizType: 0, noteOrderBind: {}, notePostTiming: {}, noteCollectionBind: { id: '' }, noteSketchCollectionBind: { id: '' }, noteCopyBind: { copyable: true }, interactionPermissionBind: { commentPermission: 0 }, optionRelationList: [] }),
-      privacy_info: { op_type: 1, type: VISIBILITY[visibility], user_ids: [] },
-      goods_info: {},
-      biz_relations: [],
-      capa_trace_info: { contextJson: JSON.stringify({ recommend_title: { recommend_title_id: '', is_use: 3, used_index: -1 }, recommendTitle: [], recommend_topics: { used: topics.map((t) => ({ id: t.id, name: t.name, topic_source: 'search_offical' })) } }) },
-    },
-    image_info: null,
-    video_info: {
-      fileid: fileId,
-      file_id: fileId,
-      format_width: width,
-      format_height: height,
-      video_preview_type: width / height <= 0.6 ? 'full_vertical_screen' : '',
-      composite_metadata: { video, audio },
-      timelines: [],
-      cover: {
-        fileid: cover.id,
-        file_id: cover.id,
-        width: cover.width,
-        height: cover.height,
-        stickers: { neptune: [], version: 2 },
-        fonts: [],
-        frame: { ts: 0, is_upload: false, is_user_select: false },
-        extra_info_json: JSON.stringify({ cover_recommend: { isUseRecommend: false, isAiCover: false } }),
+// Uploads the image in one PUT, as the cover frame goes up, and returns the image part of the publish request as the publish page builds it for an image note: the file id, the size, no filter or template, no stickers, and the mime type and size in KB.
+async function imageInfo(file) {
+  const bitmap = await createImageBitmap(file).catch(() => {
+    throw new Error(`Could not read ${file.name} as an image. RedNote takes JPEG, PNG and WebP.`);
+  });
+  const { width, height } = bitmap;
+  bitmap.close();
+  const p = await permit('image');
+  await storage(p, 'PUT', p.fileIds[0], { signed: { 'content-length': file.size }, body: new Uint8Array(await file.arrayBuffer()) });
+  return {
+    images: [
+      {
+        file_id: p.fileIds[0],
+        width,
+        height,
+        metadata: { source: -1, image_template: null },
+        stickers: { version: 2, floating: [] },
+        extra_info_json: JSON.stringify({ mimeType: file.type, image_metadata: { origin_size: file.size / 1024 } }),
       },
-      chapters: [],
-      summary: '',
-      chapter_sync_text: false,
-      segments: { count: 1, need_slice: false, items: [{ mute: 0, speed: 1, start: 0, duration, transcoded: 0, media_source: 1, original_metadata: { video, audio } }] },
-      entrance: 'web',
-      pk_cover_biz_relations: [],
-    },
+    ],
+  };
+}
+
+async function post(ctx) {
+  const media = videoTools();
+  const input = document.getElementById(INPUT_ID);
+  const file = input?.files?.[0];
+  if (!file) throw new Error(`No media to post. In this tab, run prepare, then fill '#${INPUT_ID}' <video or image>.`);
+  const video = file.type.startsWith('video/');
+  if (!video && !file.type.startsWith('image/')) throw new Error(`RedNote takes a video (a video note) or an image (an image note); this file's type is ${file.type || 'unknown'}`);
+  const title = String(ctx.args.title ?? '').trim();
+  if (titleLength(title) > 20) throw new Error(`title is ${titleLength(title)} characters as RedNote counts them (two ASCII characters as one); it allows 20`);
+  const visibility = String(ctx.args.visibility ?? 'everyone');
+  if (!Object.hasOwn(VISIBILITY, visibility)) throw new Error('visibility must be everyone, friends or only_me');
+  const description = noteText(ctx.args.description);
+  // Tags inside the description come first, then the hashtags argument's.
+  const names = [...new Set([...inlineTagNames(description), ...hashtagNames(ctx.args.hashtags)])];
+  if (!title && !description && !names.length) throw new Error('Pass a title, a description or hashtags');
+
+  const topics = await findTopics(names);
+  const topicNamed = (name) => topics.find((t) => t.name === name) ?? topics.find((t) => t.name.toLowerCase() === name.toLowerCase());
+  // The publish page's editor holds a topic as one element where it stands, and the note's text spells it #name[话题]#. Tags inside the description become that in place; the others follow the text.
+  const placed = new Set();
+  const body = description.replace(INLINE_TAG, (found, before, name) => {
+    const topic = isTagName(name) ? topicNamed(name) : null;
+    if (!topic) return found;
+    placed.add(topic.id);
+    return `${before}#${topic.name}[话题]#`;
+  });
+  const desc = [body, topics.filter((t) => !placed.has(t.id)).map((t) => `#${t.name}[话题]#`).join(' ')].filter(Boolean).join('\n\t\n');
+  const res = await call('POST', `${EDITH}/web_api/sns/v2/note`, {
+    common: commonInfo(video ? 'video' : 'normal', { title, desc, topics, visibility }),
+    image_info: video ? null : await imageInfo(file),
+    video_info: video ? await videoInfo(media, file) : null,
   });
   if (!res.data?.id) throw new Error(`RedNote did not publish the note: ${res.msg || JSON.stringify(res).slice(0, 200)}`);
   input.value = '';
-  return { id: res.data.id, url: await noteLink(res.data.id), visibility, title, hashtags: topics.map((t) => t.name) };
+  return { id: res.data.id, url: await noteLink(res.data.id), kind: video ? 'video' : 'image', visibility, title, hashtags: topics.map((t) => t.name) };
 }
 
 // How many items a list function returns: limit, from 1 to 10 (the note manager's first page), 10 unless given.

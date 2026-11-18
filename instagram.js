@@ -1,13 +1,13 @@
 // ==UserAdapter==
-// @name         Instagram Reels and comments
+// @name         Instagram Reels, photos and comments
 // @domain       www.instagram.com
 // ==/UserAdapter==
 
-// Post a video as a Reel and comment on posts as you, through Instagram's own web code in a signed-in tab.
+// Post a video as a Reel or an image as a photo, and comment on posts as you, through Instagram's own web code in a signed-in tab.
 //
 //   chrome-devtools --target <name> navigate https://www.instagram.com/
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js prepare
-//   chrome-devtools --target <name> fill '#ig-video' clip.mp4
+//   chrome-devtools --target <name> fill '#ig-media' clip.mp4
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js post -a caption="..."
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js comment -a post=<url from post> -a text="..."
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/instagram.js recent [-a limit=10]
@@ -15,19 +15,19 @@
 //
 // recent and comments only read. recent lists your latest posts, newest first, with id, url, date and caption, through the query your profile's grid uses. comments lists the first comments on a post, marking yours with mine.
 //
-// prepare adds a hidden file input for fill to put the video in.
+// prepare adds a hidden file input for fill to put one video or image in.
 //
-// post uploads that video, publishes it as a Reel with caption, returns its id and url, and empties the input, so posting again needs a new fill. Hashtags and @mentions in caption work as typed. Comments and like counts stay on, Instagram's defaults. Instagram picks the cover frame itself.
+// post uploads that file and publishes it with caption, as a Reel for a video and as a feed photo for an image, returns its id and url, and empties the input, so posting again needs a new fill. Hashtags and @mentions in caption work as typed. Comments and like counts stay on, Instagram's defaults. Instagram picks a Reel's cover frame itself. A photo must be from 4:5 to 1.91:1 (post refuses any other shape, so crop it first), and Instagram takes JPEG, so a PNG is redrawn as one.
 //
 // comment posts a comment on a post or Reel and returns its id. Pass the post's URL: comment works out the media id from the code in it.
 //
 // Run them on any signed-in www.instagram.com page.
 //
-// How it works: Instagram's web app is made of named modules that its global require returns, so this file calls the code the app itself uses. post reads the video's duration and size with Instagram's container parser rather than a video element, which Chrome doesn't load in a tab that has never been shown, uploads it with Instagram's uploader, asking Instagram to take the cover frame (extract_cover_frame, one of the app's own cover modes), and publishes with the composer's configure call, which retries while Instagram processes the video. The composer's code isn't on a page until the New post dialog opens, so post loads the dialog's resource first, without opening anything. comment runs the app's comment mutation through its Relay environment. That code adds the CSRF and session tokens itself, so this file never touches tokens or cookies. These are Instagram's internal endpoints and page internals, so an Instagram update can break them. The requests follow what the web app sent in November 2026.
+// How it works: Instagram's web app is made of named modules that its global require returns, so this file calls the code the app itself uses. post reads the video's duration and size with Instagram's container parser rather than a video element, which Chrome doesn't load in a tab that has never been shown, uploads it with Instagram's uploader, asking Instagram to take the cover frame (extract_cover_frame, one of the app's own cover modes), and publishes with the composer's configure call, which retries while Instagram processes the video. A photo goes the same way with the app's photo uploader, once the app's image reader has given its size, and the same configure call with a type other than video. The composer's code isn't on a page until the New post dialog opens, so post loads the dialog's resource first, without opening anything. comment runs the app's comment mutation through its Relay environment. That code adds the CSRF and session tokens itself, so this file never touches tokens or cookies. These are Instagram's internal endpoints and page internals, so an Instagram update can break them. The requests follow what the web app sent in November 2026.
 //
-// post and comment publish immediately as you, publicly unless the account is private, and cannot be undone from here. Agents: confirm the video, the caption and the text with the user first.
+// post and comment publish immediately as you, publicly unless the account is private, and cannot be undone from here. Agents: confirm the video or image, the caption and the text with the user first.
 
-const INPUT_ID = 'ig-video';
+const INPUT_ID = 'ig-media';
 // The composer's resource, which the New post button loads. Loading it defines the creation modules post uses.
 const COMPOSER = 'PolarisCreationModal.next.react';
 // Instagram's post codes are the media id written in base 64 with this alphabet.
@@ -60,23 +60,46 @@ function mediaId(value) {
   return id.toString();
 }
 
-// Adds the hidden file input that fill puts the video in. It lasts until the page reloads.
+// Adds the hidden file input that fill puts the video or image in. It lasts until the page reloads.
 async function prepare() {
   ig('PolarisAPIRuploadVideo');
   if (!document.getElementById(INPUT_ID)) {
-    document.body.append(Object.assign(document.createElement('input'), { type: 'file', id: INPUT_ID, accept: 'video/*', hidden: true }));
+    document.body.append(Object.assign(document.createElement('input'), { type: 'file', id: INPUT_ID, accept: 'video/*,image/*', hidden: true }));
   }
   return { selector: `#${INPUT_ID}` };
 }
 
-async function post(ctx) {
-  const input = document.getElementById(INPUT_ID);
-  const file = input?.files?.[0];
-  if (!file) throw new Error(`No video to post. In this tab, run prepare, then fill '#${INPUT_ID}' <video>.`);
-  if (!file.type.startsWith('video/')) throw new Error(`A Reel needs a video; this file's type is ${file.type || 'unknown'}`);
-  const caption = String(ctx.args.caption ?? '').replace(/\r\n?/g, '\n').trim();
-  const { api, parser, uploader, helpers } = await composer();
+// Instagram's photo uploader takes JPEG, so any other image is redrawn as one, on white where it was transparent.
+async function asJpeg(file) {
+  if (file.type === 'image/jpeg') return file;
+  const bitmap = await createImageBitmap(file);
+  const canvas = Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+  if (!blob) throw new Error(`Could not turn ${file.name} into a JPEG`);
+  return new File([blob], `${file.name.replace(/\.[^.]*$/, '')}.jpg`, { type: 'image/jpeg' });
+}
 
+// Publishes an image as a feed photo. The app's image reader gives its size, the photo uploader sends it, and configure publishes it, the same call a Reel uses with a type other than video.
+async function publishPhoto(source, caption, { api, helpers }) {
+  const file = await asJpeg(source);
+  const { width, height } = await ig('polarisReadImageFile').readImageFile(file);
+  // The feed takes photos from 4:5 (portrait) to 1.91:1 (landscape).
+  if (width / height < 0.8 || width / height > 1.91) throw new Error(`Instagram posts photos from 4:5 to 1.91:1, and this one is ${width}x${height}. Crop it first.`);
+  const uploadId = helpers.createUploadId();
+  const uploaded = await ig('PolarisAPIRuploadPhoto').uploadPhoto({ entityName: `fb_uploader_${uploadId}`, file, uploadId, uploadMediaHeight: height, uploadMediaWidth: width });
+  if (uploaded?.status !== 'ok') throw new Error(`Instagram did not take the photo: ${JSON.stringify(uploaded).slice(0, 200)}`);
+
+  const res = await api.configure({ type: 'photo', uploadId, caption, archiveOnly: false, disableComments: false, disableLikeViewCounts: false, disableOaReuse: false, usertags: [], videoSubtitlesEnabled: false });
+  if (res?.status !== 'ok' || !res.media?.pk) throw new Error(`Instagram did not publish the photo: ${res?.message || res?.error_title || `status ${res?.status}`}`);
+  return res.media;
+}
+
+// Publishes a video as a Reel.
+async function publishReel(file, caption, { api, parser, uploader, helpers }) {
   const info = await parser.getVideoSourceMetadataFromFile(file, null, false);
   if (!info?.durationSeconds || !info.width || !info.height) throw new Error("Instagram's parser could not read this video's duration and size. Reels take MP4 or MOV files.");
   const uploadId = helpers.createUploadId();
@@ -98,8 +121,19 @@ async function post(ctx) {
 
   const res = await api.configure({ type: 'video', uploadId, caption, archiveOnly: false, disableComments: false, disableLikeViewCounts: false, disableOaReuse: false, usertags: [], videoSubtitlesEnabled: false });
   if (res?.status !== 'ok' || !res.media?.pk) throw new Error(`Instagram did not publish the Reel: ${res?.message || res?.error_title || `status ${res?.status}`}`);
+  return res.media;
+}
+
+async function post(ctx) {
+  const input = document.getElementById(INPUT_ID);
+  const file = input?.files?.[0];
+  if (!file) throw new Error(`No media to post. In this tab, run prepare, then fill '#${INPUT_ID}' <video or image>.`);
+  const video = file.type.startsWith('video/');
+  if (!video && !file.type.startsWith('image/')) throw new Error(`Instagram takes a video (a Reel) or an image (a photo); this file's type is ${file.type || 'unknown'}`);
+  const caption = String(ctx.args.caption ?? '').replace(/\r\n?/g, '\n').trim();
+  const media = await (video ? publishReel : publishPhoto)(file, caption, await composer());
   input.value = '';
-  return { id: String(res.media.pk), url: `https://www.instagram.com/reel/${res.media.code}/`, caption };
+  return { id: String(media.pk), url: `https://www.instagram.com/${video ? 'reel' : 'p'}/${media.code}/`, caption };
 }
 
 // How many items a list function returns: limit, from 1 to 50, 10 unless given.
