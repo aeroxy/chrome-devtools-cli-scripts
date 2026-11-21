@@ -267,10 +267,10 @@ Posts text, link and image posts, and comments, as you on Reddit, through the en
 | --- | --- |
 | `prepare` | On the submit page's Images tab, adds a hidden file input, `#reddit-media`, for `fill` to put one image in. A text or link post doesn't need it. |
 | `post` | Publishes to the subreddit whose submit page the tab is on and returns the post's `id` and `url`. Args: `title` (required), `url` (makes it a link post; an image in `#reddit-media` makes it an image post instead), `text` (the body, in Markdown), `flair` (a flair id from `rules`). |
-| `comment` | Posts a comment, in Markdown, on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`. |
+| `comment` | Posts a comment, in Markdown, on the post the tab is showing and returns its `comment` id and `url`. Args: `post` (the post's URL, such as `url` from `post`), `text`, and `parent` (a comment's id, `t1_...`, or its permalink) to reply to that comment instead. |
 | `rules` | What a subreddit asks of a post: the post types it takes (`postTypes`: `any`, `link` or `self`), the requirements it has set (flair, title and body rules, allowed domains), its rules, and its post flairs with their ids. Args: `subreddit`. |
 | `recent` | Your latest posts, newest first: id, url, date, subreddit, title, link, text. Args: `limit` (default 10, at most 50). |
-| `comments` | The newest top-level comments on a post, in Markdown, with `mine` marking yours. Args: `post` (its URL). |
+| `comments` | The newest top-level comments on a post, in Markdown, with `mine` marking yours. Args: `post` (its URL), and `parent` (a comment's id or permalink) for the replies to that comment instead. |
 
 ```bash
 chrome-devtools --target <name> adapter reddit.js rules -a subreddit=<subreddit>
@@ -288,7 +288,7 @@ chrome-devtools --target <name> adapter reddit.js comment -a post=<url from post
 Things to know:
 
 - Run `post` on the subreddit's submit page and `comment` on the post's page. Reddit gets a Google reCAPTCHA Enterprise token when you press each form's button, and these functions ask that form's own code for one.
-- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one.
+- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one. A reply (`parent`) needs a page that shows that comment, such as its permalink: `comment` opens the comment's reply box and sends that box's own form, which adds Reddit's `parentId` and `commentDepth`.
 - `text` is Markdown in both functions, and a link or image post can have a body too.
 - Run `rules` before posting: a subreddit that requires a flair refuses a post without one, many require a body, some bar words from titles, and one whose `postTypes` is `link` or `self` takes no image post. `post` sets no NSFW or spoiler tag.
 - An image post runs on the submit page's Images tab (`/submit/?type=IMAGE`) and takes one JPEG, PNG, WebP or GIF. Reddit posts an image or a link, not both, so `post` refuses `url` together with an image: put the link in a comment. The image goes through the submit page's own Images field, which uploads it as it does a picked file, and `post` empties the input afterwards.
@@ -298,7 +298,7 @@ Things to know:
 - Every request carries Reddit's CSRF token. Reddit's own scripts read it from the `csrf_token` cookie, and the adapter does the same inside the page, never returning or logging it. It touches no other cookie.
 - These are Reddit's internal endpoints and page internals, so a Reddit update can break them.
 
-Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. A link post with a `flair` id from `rules` went up with that flair in a subreddit that requires one. An image post, a JPEG screenshot with a body and a flair, was published (2026-11-18) in a subreddit that requires a flair, and showed its image, flair and body. That subreddit's AutoModerator held it for its moderators (`removed` was `automod_filtered`), so check `removed` after posting.
+Status (2026-11-16): in a test subreddit, `post` published a text post (a Markdown body with bold text and two paragraphs) and a link post, and `comment` commented on the text post in Markdown. All three rendered as written and were then deleted. `rules`, `recent` and `comments` were checked against live subreddits and the account's own posts. A link post with a `flair` id from `rules` went up with that flair in a subreddit that requires one. An image post, a JPEG screenshot with a body and a flair, was published (2026-11-18) in a subreddit that requires a flair, and showed its image, flair and body. That subreddit's AutoModerator held it for its moderators (`removed` was `automod_filtered`), so check `removed` after posting. Replying (`comment` with `parent`) was added on 2026-11-21 from the form Reddit's reply box sends: the same create-comment address, plus the box's `parentId` and `commentDepth`. `comments` with `parent` was checked on a live thread; no reply has been posted through `comment` yet.
 
 ## linkedin.js
 
@@ -335,7 +335,7 @@ Things to know:
 - `post` stops if a composer is already open, or if the composer opens with a saved draft in it, so it never posts over your draft.
 - `post` returns once LinkedIn has added the post to your feed. For a video, that's after LinkedIn has uploaded and processed it, so a long video takes a while; `post` waits up to 10 minutes.
 - `post` empties `#li-media` once the post is published, so running it again can't post the same media twice. A page reload removes the input: run `prepare` and `fill` again.
-- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one. Pass `post` as a URL: the CLI turns a bare 19-digit id into a rounded number, so `comment` refuses one.
+- `comment` checks that the tab shows the post you named, so it can't comment on the wrong one. A reply (`parent`) needs a page that shows that comment, such as its permalink: `comment` opens the comment's reply box and sends that box's own form, which adds Reddit's `parentId` and `commentDepth`. Pass `post` as a URL: the CLI turns a bare 19-digit id into a rounded number, so `comment` refuses one.
 - The `url` from `comment` has the form LinkedIn's Copy link to comment uses. A link to the post with only `commentUrn` added opened the post without showing the comment.
 - `recent` runs on your activity page (`https://www.linkedin.com/in/me/recent-activity/all/`) and sees what the page has loaded, usually a few weeks. `comments` runs on the post's page, like `comment`.
 - `post` and `comment` publish immediately, publicly, and can't be undone from here. Agents: confirm the text, any image or video, and the post to comment on with the user first.

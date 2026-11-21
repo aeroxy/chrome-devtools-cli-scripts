@@ -13,19 +13,19 @@
 //   chrome-devtools --target <name> fill '#reddit-media' screenshot.png
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js post -a title="..." [-a text="..."] [-a flair=<id from rules>]
 //   chrome-devtools --target <name> navigate <url from post>
-//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comment -a post=<url from post> -a text="..."
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comment -a post=<url from post> -a text="..." [-a parent=<comment id or permalink>]
 //   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js recent [-a limit=10]
-//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comments -a post=<url>
+//   chrome-devtools --target <name> adapter <skill-folder>/scripts/reddit.js comments -a post=<url> [-a parent=<comment id or permalink>]
 //
 // rules, recent and comments only read, on any www.reddit.com page. rules shows what a subreddit asks of a post: the post types it takes (postTypes: any, link or self), the posting requirements it has set (requirements, such as is_flair_required, body_restriction_policy, title_blacklisted_strings or domain_whitelist), its rules and its post flairs with their ids. recent lists your latest posts, newest first, with id, url, date, subreddit, title, link, text and removed (null for a post that is up, or Reddit's reason, such as automod_filtered, when a moderator or the subreddit's AutoModerator has removed or held it). comments lists the newest top-level comments on a post, marking yours with mine; they come back in Markdown, so a pasted link can read [url](url).
 //
 // post publishes to the subreddit whose submit page the tab is on and returns the post's id and url. With url it's a link post, with an image in #reddit-media it's an image post, and with neither it's a text post. text is the body, in Markdown, and is optional for all three, unless the subreddit requires one. An image post runs on the submit page's Images tab (/submit/?type=IMAGE), where prepare adds the hidden file input for fill to put one JPEG, PNG, WebP or GIF image in; post empties the input afterwards, so posting again needs a new fill. Reddit posts an image or a link, not both, so a link goes in a comment. flair is the id of one of the subreddit's flairs from rules; post sends it with the flair's text, as the submit form does. A subreddit that requires a flair refuses a post without one. post also returns removed, read a few seconds after posting: null for a post that is up, or the reason Reddit hides it when the subreddit's AutoModerator holds it for moderators, which the author's own page doesn't show.
 //
-// comment posts a comment, in Markdown, on the post the tab is showing and returns its id and url. Pass the post's URL as post too: comment checks it against the page so it can't comment on the wrong post.
+// comment posts a comment, in Markdown, on the post the tab is showing and returns its id and url. Pass the post's URL as post too: comment checks it against the page so it can't comment on the wrong post. With parent, a comment's id (t1_...) or permalink, it replies to that comment instead, through the reply box Reddit opens under it, so run it on a page that shows that comment (its permalink does). comments with parent lists the replies to that comment instead of the post's top-level comments.
 //
 // Both run on a page where Reddit has its form for that action: the submit page for post, the post's own page for comment. Each form asks Google reCAPTCHA Enterprise for a token when you press its button, and these functions ask the same form's code for one rather than calling reCAPTCHA themselves. Let that page load with its tab showing: once, a Reddit page that loaded in a background tab froze until the tab was shown.
 //
-// How it works: post sends the CreatePost operation to /svc/shreddit/graphql and comment sends the comment form to /svc/shreddit/<post id>/create-comment, as the page does. Both carry Reddit's CSRF token, which Reddit's own scripts read from the csrf_token cookie for every request; this file does the same, inside the page, and never returns or logs it. For an image, post hands the file to the submit page's own Images field (r-post-media-input), which uploads it to Reddit's media storage as it does for a picked file, and sends the address that field returns as the post's image. These are Reddit's internal endpoints and page internals, so a Reddit update can break them. The requests follow what the web app sent in November 2026.
+// How it works: post sends the CreatePost operation to /svc/shreddit/graphql and comment sends the comment form to /svc/shreddit/<post id>/create-comment, as the page does; a reply goes to the same address with the reply box's own hidden fields (parentId, commentDepth). Both carry Reddit's CSRF token, which Reddit's own scripts read from the csrf_token cookie for every request; this file does the same, inside the page, and never returns or logs it. For an image, post hands the file to the submit page's own Images field (r-post-media-input), which uploads it to Reddit's media storage as it does for a picked file, and sends the address that field returns as the post's image. These are Reddit's internal endpoints and page internals, so a Reddit update can break them. The requests follow what the web app sent in November 2026.
 //
 // post and comment publish immediately as you and cannot be undone from here. Agents: confirm the subreddit, the title, the link or image and the text with the user first.
 
@@ -44,6 +44,14 @@ async function recaptchaToken(element, form) {
   await element.getRecaptchaToken();
   if (!input.value) throw new Error("Reddit's reCAPTCHA gave no token. Reload the page and retry.");
   return input.value;
+}
+
+// A comment's full id (t1_...) from that id, a bare one or its permalink (/comment/<id>/ or /comments/<post>/<slug>/<id>/).
+function commentId(value) {
+  const s = String(value ?? '').trim();
+  const id = /^t1_([a-z0-9]+)$/i.exec(s)?.[1] ?? /\/comment\/([a-z0-9]+)/i.exec(s)?.[1] ?? /\/comments\/[a-z0-9]+\/[^/]+\/([a-z0-9]+)/i.exec(s)?.[1] ?? /^([a-z0-9]+)$/i.exec(s)?.[1];
+  if (!id) throw new Error('parent is a comment id (t1_...) or its permalink');
+  return `t1_${id.toLowerCase()}`;
 }
 
 // A post's base-36 id from its URL (/comments/<id>/ or redd.it/<id>).
@@ -214,13 +222,20 @@ async function recent(ctx) {
   }));
 }
 
-// The newest top-level comments on a post, marking yours. Comments come back in Markdown, so a pasted link can read [url](url).
+// The newest top-level comments on a post, or with parent the replies to that comment, marking yours. Comments come back in Markdown, so a pasted link can read [url](url).
 async function comments(ctx) {
   const id = postId(ctx.args.post);
-  const [name, thread] = await Promise.all([me(), getJson(`/comments/${id}.json?raw_json=1&limit=100&depth=1&sort=new`)]);
+  const parent = ctx.args.parent ? commentId(ctx.args.parent) : null;
+  const path = parent
+    ? `/comments/${id}/_/${parent.slice(3)}.json?raw_json=1&limit=100&depth=2&sort=new`
+    : `/comments/${id}.json?raw_json=1&limit=100&depth=1&sort=new`;
+  const [name, thread] = await Promise.all([me(), getJson(path)]);
+  const top = thread[1]?.data?.children ?? [];
+  const list = parent ? top.find((c) => c.data?.name === parent)?.data?.replies?.data?.children ?? [] : top;
   return {
     post: `t3_${id}`,
-    comments: (thread[1]?.data?.children ?? []).filter((c) => c.kind === 't1').map(({ data: c }) => ({ id: c.name, author: c.author, mine: c.author === name, text: c.body })),
+    ...(parent ? { parent } : {}),
+    comments: list.filter((c) => c.kind === 't1').map(({ data: c }) => ({ id: c.name, author: c.author, mine: c.author === name, text: c.body })),
   };
 }
 
@@ -228,13 +243,31 @@ async function comment(ctx) {
   const wanted = postId(ctx.args.post);
   const text = markdown(ctx.args.text);
   if (!text) throw new Error('text is required');
-  const host = document.querySelector('comment-composer-host[post-id]');
+  const parent = ctx.args.parent ? commentId(ctx.args.parent) : null;
+  let host = document.querySelector('comment-composer-host[post-id]:not([parent-id])');
+  if (parent) {
+    const target = document.querySelector(`shreddit-comment[thingid="${parent}"]`);
+    if (!target) throw new Error(`This page doesn't show comment ${parent}. Open its permalink in this tab first.`);
+    const replyBox = () => document.querySelector(`comment-composer-host[parent-id="${parent}"]`);
+    if (!replyBox()) target.querySelector('faceplate-tracker[noun="reply_comment"] button')?.click();
+    for (let i = 0; i < 40 && !replyBox()?.getForm?.(); i++) await sleep(250);
+    host = replyBox();
+    if (!host) throw new Error(`Reddit opened no reply box under comment ${parent}. Reload the page and retry.`);
+  }
   const form = host?.getForm?.();
   if (!host?.getRecaptchaToken || !form) throw new Error(`comment runs on the post's page. Open https://www.reddit.com/comments/${wanted}/ in this tab first.`);
   const onPage = host.getAttribute('post-id');
   if (onPage !== `t3_${wanted}`) throw new Error(`This tab shows post ${onPage}, not t3_${wanted}. Open the post you want to comment on first.`);
 
-  const body = new URLSearchParams({ recaptchaToken: await recaptchaToken(host, form), content: text, mode: 'markdown', csrf_token: csrfToken() });
+  // The form's own hidden fields (a reply box carries parentId and commentDepth), then the comment.
+  const body = new URLSearchParams();
+  for (const input of form.querySelectorAll('input[type="hidden"][name]')) {
+    if (input.name !== 'recaptchaToken') body.set(input.name, input.value);
+  }
+  body.set('recaptchaToken', await recaptchaToken(host, form));
+  body.set('content', text);
+  body.set('mode', 'markdown');
+  body.set('csrf_token', csrfToken());
   const res = await fetch(`/svc/shreddit/${onPage}/create-comment`, {
     method: 'POST',
     credentials: 'include',
@@ -246,5 +279,5 @@ async function comment(ctx) {
   const created = new DOMParser().parseFromString(html, 'text/html').querySelector('shreddit-comment[thingid], shreddit-comment[thingId]');
   const id = created?.getAttribute('thingId') ?? created?.getAttribute('thingid');
   if (!res.ok || !id) throw new Error(`Reddit did not post the comment: HTTP ${res.status} ${html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`);
-  return { post: onPage, comment: id, url: `https://www.reddit.com${created.getAttribute('permalink') ?? ''}`, text };
+  return { post: onPage, ...(parent ? { parent } : {}), comment: id, url: `https://www.reddit.com${created.getAttribute('permalink') ?? ''}`, text };
 }
